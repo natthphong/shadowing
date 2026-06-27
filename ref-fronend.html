@@ -1,0 +1,436 @@
+<!DOCTYPE html><html class="light" lang="en" style=""><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Linguist Pro - Shadowing Practice</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "secondary-container": "#d5e4f8",
+                        "error-container": "#ffdad6",
+                        "surface-container-lowest": "#ffffff",
+                        "error": "#ba1a1a",
+                        "tertiary-container": "#00855b",
+                        "on-secondary-fixed": "#0e1d2b",
+                        "on-secondary": "#ffffff",
+                        "surface-dim": "#cbdbf5",
+                        "surface-variant": "#d3e4fe",
+                        "surface-container": "#e5eeff",
+                        "on-tertiary-container": "#f5fff6",
+                        "on-error": "#ffffff",
+                        "primary": "#0058be",
+                        "on-primary-fixed-variant": "#004395",
+                        "surface": "#f8f9ff",
+                        "inverse-primary": "#adc6ff",
+                        "on-surface-variant": "#424754",
+                        "on-tertiary-fixed-variant": "#005236",
+                        "on-tertiary-fixed": "#002113",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#006947",
+                        "on-secondary-fixed-variant": "#3a4858",
+                        "on-primary-fixed": "#001a42",
+                        "outline": "#727785",
+                        "on-surface": "#0b1c30",
+                        "on-error-container": "#93000a",
+                        "primary-fixed": "#d8e2ff",
+                        "secondary-fixed": "#d5e4f8",
+                        "on-primary-container": "#fefcff",
+                        "on-primary": "#ffffff",
+                        "secondary": "#516070",
+                        "outline-variant": "#c2c6d6",
+                        "surface-tint": "#005ac2",
+                        "surface-bright": "#f8f9ff",
+                        "inverse-surface": "#213145",
+                        "tertiary-fixed": "#6ffbbe",
+                        "surface-container-high": "#dce9ff",
+                        "primary-fixed-dim": "#adc6ff",
+                        "surface-container-highest": "#d3e4fe",
+                        "secondary-fixed-dim": "#b9c8db",
+                        "surface-container-low": "#eff4ff",
+                        "tertiary-fixed-dim": "#4edea3",
+                        "on-secondary-container": "#576676",
+                        "on-background": "#0b1c30",
+                        "background": "#f8f9ff",
+                        "primary-container": "#2170e4",
+                        "inverse-on-surface": "#eaf1ff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "component-padding-y": "8px",
+                        "stack-gap": "16px",
+                        "component-padding-x": "12px",
+                        "content-max-width": "1200px",
+                        "gutter": "24px",
+                        "sidebar-width": "260px"
+                    },
+                    "fontFamily": {
+                        "ipa-label": ["JetBrains Mono"],
+                        "body-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "transcript-th": ["Inter"],
+                        "label-sm": ["Inter"],
+                        "transcript-en": ["Inter"]
+                    },
+                    "fontSize": {
+                        "ipa-label": ["13px", {"lineHeight": "1", "letterSpacing": "0.05em", "fontWeight": "400"}],
+                        "body-md": ["14px", {"lineHeight": "1.5", "fontWeight": "400"}],
+                        "display-lg": ["32px", {"lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "transcript-th": ["24px", {"lineHeight": "1.5", "letterSpacing": "0", "fontWeight": "500"}],
+                        "label-sm": ["12px", {"lineHeight": "1", "fontWeight": "600"}],
+                        "transcript-en": ["18px", {"lineHeight": "1.6", "letterSpacing": "0", "fontWeight": "400"}]
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+            line-height: 1;
+        }
+        .active-word {
+            border-bottom: 3px solid #0058be;
+            background-color: #d5e4f8;
+            padding: 0 4px;
+            border-radius: 4px;
+        }
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .custom-shadow {
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05);
+        }
+        @keyframes pulse-status {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+        .animate-status {
+            animation: pulse-status 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body-md text-body-md overflow-hidden h-screen flex">
+<!-- SIDEBAR (SideNav Anchor) -->
+<aside class="w-[260px] h-screen sticky left-0 top-0 flex flex-col bg-surface border-r border-outline-variant p-4 gap-stack-gap z-20">
+<div class="flex flex-col gap-1 mb-6">
+<span class="text-2xl font-bold text-primary tracking-wider">Daily speaking</span>
+<span class="text-on-surface-variant text-xs font-medium opacity-60 uppercase tracking-widest">Shadowing Workspace</span>
+</div>
+<nav class="flex flex-col gap-1 flex-grow">
+<!-- Dashboard -->
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:bg-surface-container-low transition-all duration-200 cursor-pointer rounded-lg" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="">Dashboard</span>
+</a>
+<!-- Practice (Active) -->
+<a class="flex items-center gap-3 px-3 py-2 bg-secondary-container text-primary font-bold rounded-lg cursor-pointer transition-all duration-200" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">school</span>
+<span class="">Practice</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:bg-surface-container-low transition-all duration-200 cursor-pointer rounded-lg" href="#">
+<span class="material-symbols-outlined">library_books</span>
+<span class="">Grammar Library</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:bg-surface-container-low transition-all duration-200 cursor-pointer rounded-lg" href="#">
+<span class="material-symbols-outlined">style</span>
+<span class="">Flashcards</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 text-secondary hover:bg-surface-container-low transition-all duration-200 cursor-pointer rounded-lg" href="#">
+<span class="material-symbols-outlined">settings</span>
+<span class="">Settings</span>
+</a>
+</nav>
+<button class="mt-4 bg-primary text-on-primary py-3 px-4 rounded-xl font-bold flex items-center justify-center gap-2 hover:bg-primary-container transition-colors">
+<span class="material-symbols-outlined">add</span>
+            New Session
+        </button>
+<div class="mt-auto pt-4 border-t border-outline-variant flex flex-col gap-3">
+<div class="flex items-center gap-3 px-3 py-2 text-on-surface-variant">
+<div class="w-2 h-2 rounded-full bg-tertiary animate-status"></div>
+<span class="font-ipa-label text-ipa-label">Ollama: Llama3</span>
+<span class="material-symbols-outlined text-[16px] ml-auto">memory</span>
+</div>
+
+</div>
+</aside>
+<!-- MAIN WORKSPACE -->
+<main class="flex-grow flex flex-col h-screen overflow-hidden">
+<!-- TOP APP BAR -->
+<header class="w-full h-16 sticky top-0 z-10 flex justify-between items-center px-gutter bg-surface-container-lowest border-b border-outline-variant">
+<div class="flex items-center gap-4">
+<nav class="flex gap-4 text-body-md">
+<span class="text-on-surface-variant font-label-sm">Lessons</span>
+<span class="material-symbols-outlined text-outline-variant">chevron_right</span>
+<span class="text-on-surface font-bold">Chicken Little</span>
+<span class="bg-primary-fixed text-on-primary-fixed px-2 py-0.5 rounded text-[10px] font-bold">B1</span>
+</nav>
+</div>
+<div class="flex items-center gap-8">
+<div class="hidden md:flex gap-6">
+<a class="text-primary border-b-2 border-primary pb-1 font-bold cursor-pointer transition-colors" href="#">Translation</a>
+<a class="text-on-surface-variant hover:text-primary cursor-pointer transition-colors" href="#">IPA</a>
+<a class="text-on-surface-variant hover:text-primary cursor-pointer transition-colors" href="#">Auto-Scroll</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors cursor-pointer">history</button>
+<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors cursor-pointer">help_outline</button>
+<button class="bg-primary text-on-primary px-4 py-1.5 rounded-lg font-bold text-label-sm active:opacity-80 transition-all">Finish Session</button>
+</div>
+</div>
+</header>
+<!-- PRACTICE AREA -->
+<div class="flex flex-grow overflow-hidden">
+<!-- LEFT CONTENT (Player & Focus) -->
+<div class="flex-[3] flex flex-col overflow-y-auto no-scrollbar p-gutter bg-background">
+<!-- Video Player Container -->
+<div class="relative w-full aspect-video rounded-2xl overflow-hidden bg-on-surface custom-shadow mb-8">
+<div class="absolute inset-0 flex flex-col">
+<!-- Top overlay -->
+<div class="p-6 flex justify-between items-start bg-gradient-to-b from-black/60 to-transparent w-full">
+<div class="flex items-center gap-4">
+<div class="w-10 h-10 rounded-full border border-white/20 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="A small circular logo for 'The Fable Cottage', featuring stylized storybook illustrations of animals, minimalist and professional, in a high-contrast black and white graphic style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDelN19NaRs9AU1BcD01SIBRrmrYmekFvXNdZMZ9myufnLLrlUu589IKFxLuvoCHK0o1VhUmP9gqqCTKx4ysy4q_3biMYVHTLCkRD-MnvLWAG9mbFUAQ9CiFZLmtPX267f2lONrVAA0Ztdoqk1bGhuTtFtvSt8xj_-JXQ0Gp0aOCIrvN4ipCwrv_cGJWQ7unapXL1QPKnfnsI-XaqhyVOloKi5gSvDbDm6wuuuAYtIlNohcCh5bC00uJZtdHNGHm1yUhm4OKwZA6twW">
+</div>
+<div class="text-white">
+<h3 class="font-bold text-lg">Chicken Little</h3>
+<p class="text-xs opacity-80">The Fable Cottage</p>
+</div>
+</div>
+<div class="flex gap-4 text-white">
+<span class="material-symbols-outlined">volume_up</span>
+<span class="material-symbols-outlined">closed_caption</span>
+<span class="material-symbols-outlined">settings</span>
+</div>
+</div>
+<!-- Main visual (Placeholder for video) -->
+<div class="flex-grow flex items-center justify-center relative">
+
+<button class="w-20 h-20 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform group">
+<span class="material-symbols-outlined text-white text-5xl" style="font-variation-settings: 'FILL' 1;">play_arrow</span>
+</button>
+</div>
+<!-- Progress Bar with Markers -->
+<div class="px-6 pb-6 w-full">
+<div class="relative h-1.5 w-full bg-white/20 rounded-full cursor-pointer">
+<div class="absolute top-0 left-0 h-full bg-primary rounded-full w-[25%] z-10"></div>
+<!-- Segment markers -->
+<div class="absolute top-0 left-[20%] w-[1px] h-full bg-white/40 z-20"></div>
+<div class="absolute top-0 left-[45%] w-[1px] h-full bg-white/40 z-20"></div>
+<div class="absolute top-0 left-[70%] w-[1px] h-full bg-white/40 z-20"></div>
+<!-- Current scrubber -->
+<div class="absolute top-1/2 -translate-y-1/2 left-[25%] w-4 h-4 bg-primary border-2 border-white rounded-full z-30 shadow-lg"></div>
+</div>
+<div class="flex justify-between mt-2 text-white/80 text-[10px] font-mono">
+<span class="">01:14 / 05:13</span>
+<span class="">Part 1: The Sky is Falling</span>
+</div>
+</div>
+</div>
+</div>
+<!-- FOCUS SENTENCE VIEW -->
+<section class="flex flex-col items-center text-center gap-stack-gap py-8 bg-surface-container-lowest rounded-3xl border border-outline-variant custom-shadow">
+<div class="flex gap-4 mb-4">
+<div class="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full text-secondary">
+<span class="material-symbols-outlined text-sm">pause_circle</span>
+<span class="text-label-sm">Auto-pause</span>
+</div>
+<div class="flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full text-secondary">
+<span class="material-symbols-outlined text-sm">speed</span>
+<span class="text-label-sm">1.0x</span>
+</div>
+</div>
+<!-- Interactive Word Display -->
+<div class="flex flex-wrap justify-center gap-x-8 gap-y-10 px-gutter max-w-2xl">
+<div class="flex flex-col items-center">
+<span class="font-transcript-th text-transcript-th border-b-4 border-primary px-2 pb-1 bg-secondary-container/30 rounded-t-lg">Let</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/lɛt/</span>
+</div>
+<div class="flex flex-col items-center opacity-60 hover:opacity-100 transition-opacity">
+<span class="font-transcript-th text-transcript-th border-b-4 border-transparent px-2 pb-1">me</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/mi/</span>
+</div>
+<div class="flex flex-col items-center opacity-60">
+<span class="font-transcript-th text-transcript-th border-b-4 border-transparent px-2 pb-1">tell</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/tɛl/</span>
+</div>
+<div class="flex flex-col items-center opacity-60">
+<span class="font-transcript-th text-transcript-th border-b-4 border-transparent px-2 pb-1">you</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/ju/</span>
+</div>
+<div class="flex flex-col items-center opacity-60">
+<span class="font-transcript-th text-transcript-th border-b-4 border-transparent px-2 pb-1">a</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/ə/</span>
+</div>
+<div class="flex flex-col items-center opacity-60">
+<span class="font-transcript-th text-transcript-th border-b-4 border-transparent px-2 pb-1">story</span>
+<span class="font-ipa-label text-ipa-label text-secondary mt-2">/ˈstɔːri/</span>
+</div>
+</div>
+<!-- Translation -->
+<p class="text-on-surface-variant font-transcript-en italic mt-4 opacity-80">"ให้ฉันเล่าเรื่องนึงให้คุณฟัง"</p>
+<!-- FEEDBACK PILL (Active) -->
+<div class="mt-4 px-6 py-4 bg-tertiary-container/10 border border-tertiary-container/20 rounded-2xl flex items-center gap-4">
+<div class="flex flex-col items-start">
+<span class="font-label-sm text-tertiary flex items-center gap-1 uppercase tracking-wider">
+<span class="material-symbols-outlined text-sm">stars</span> Last Attempt: 82%
+                            </span>
+<span class="text-body-md text-on-surface-variant mt-1">Try to emphasize <span class="font-bold text-primary">'story'</span> more clearly.</span>
+</div>
+<div class="h-10 w-[1px] bg-outline-variant"></div>
+<button class="text-primary font-bold text-label-sm hover:underline">Compare</button>
+</div>
+<!-- MAIN RECORDING CONTROLS -->
+<div class="flex items-center gap-6 mt-8">
+<button class="w-14 h-14 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors">
+<span class="material-symbols-outlined">replay</span>
+</button>
+<button class="px-12 py-4 bg-primary text-on-primary rounded-full flex items-center gap-3 custom-shadow hover:scale-105 active:scale-95 transition-all">
+<span class="material-symbols-outlined text-3xl" style="font-variation-settings: 'FILL' 1;">mic</span>
+<span class="font-bold text-lg">Record</span>
+</button>
+<button class="w-14 h-14 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors">
+<span class="material-symbols-outlined">skip_next</span>
+</button>
+</div>
+</section>
+<div class="mt-8 flex items-center gap-4 px-gutter py-4 border-2 border-dashed border-outline-variant rounded-2xl text-on-surface-variant opacity-60">
+<span class="material-symbols-outlined">comment</span>
+<span class="text-label-sm">Community Comments (89)</span>
+<span class="material-symbols-outlined ml-auto">expand_more</span>
+</div>
+</div>
+<!-- RIGHT SIDEBAR (Transcript List) -->
+<aside class="flex-[1.2] min-w-[320px] bg-surface-container-lowest border-l border-outline-variant flex flex-col">
+<div class="p-gutter border-b border-outline-variant flex items-center justify-between">
+<h2 class="font-bold text-on-surface">Full Transcript</h2>
+<div class="flex items-center gap-2">
+<span class="bg-tertiary text-white px-2 py-1 rounded text-[10px] font-bold">12% Completed</span>
+</div>
+</div>
+<div class="flex-grow overflow-y-auto p-4 flex flex-col gap-3">
+<!-- Sentence Card Active -->
+<div class="p-4 rounded-xl border-l-4 border-primary bg-secondary-container flex flex-col gap-2 custom-shadow">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-bold text-primary">#1</span>
+<div class="flex gap-2">
+<span class="material-symbols-outlined text-sm text-primary">edit</span>
+<span class="material-symbols-outlined text-sm text-primary">report_problem</span>
+</div>
+</div>
+<p class="font-transcript-en text-on-surface">Let me tell you a story about a chicken</p>
+<p class="text-xs text-on-secondary-fixed-variant opacity-70">ให้ฉันเล่าเรื่องไก่ให้คุณฟัง</p>
+<div class="mt-2 flex items-center justify-between">
+<span class="text-[10px] bg-primary text-on-primary px-2 py-0.5 rounded-full">ACTIVE</span>
+<span class="font-ipa-label text-xs text-primary">82% Accurate</span>
+</div>
+</div>
+<!-- Sentence Card Inactive -->
+<div class="p-4 rounded-xl border border-outline-variant bg-white flex flex-col gap-2 hover:border-primary/40 transition-colors cursor-pointer">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-bold text-on-surface-variant">#2</span>
+<span class="material-symbols-outlined text-sm text-outline-variant">edit</span>
+</div>
+<p class="font-transcript-en text-on-surface">His name is Chicken Little</p>
+<p class="text-xs text-on-surface-variant opacity-70">เขาชื่อเจี๊ยบเล็ก</p>
+</div>
+<!-- Sentence Card Inactive -->
+<div class="p-4 rounded-xl border border-outline-variant bg-white flex flex-col gap-2 hover:border-primary/40 transition-colors cursor-pointer">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-bold text-on-surface-variant">#3</span>
+<span class="material-symbols-outlined text-sm text-outline-variant">edit</span>
+</div>
+<p class="font-transcript-en text-on-surface">He lives in a normal little chicken house in a normal little town</p>
+<p class="text-xs text-on-surface-variant opacity-70">เขาอาศัยอยู่ในบ้านไก่หลังเล็กๆ ธรรมดาๆ</p>
+</div>
+<!-- Sentence Card Inactive -->
+<div class="p-4 rounded-xl border border-outline-variant bg-white flex flex-col gap-2 opacity-50 grayscale cursor-not-allowed">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-bold text-on-surface-variant">#4</span>
+<span class="material-symbols-outlined text-sm text-outline-variant">lock</span>
+</div>
+<p class="font-transcript-en text-on-surface">Chicken Little is neither tall nor short</p>
+<p class="text-xs text-on-surface-variant opacity-70">เจี๊ยบเล็กไม่สูงและไม่เตี้ย</p>
+</div>
+<!-- Sentence Card Inactive -->
+<div class="p-4 rounded-xl border border-outline-variant bg-white flex flex-col gap-2 opacity-50 grayscale cursor-not-allowed">
+<div class="flex justify-between items-start">
+<span class="text-[10px] font-bold text-on-surface-variant">#5</span>
+<span class="material-symbols-outlined text-sm text-outline-variant">lock</span>
+</div>
+<p class="font-transcript-en text-on-surface">He is neither fat nor thin</p>
+</div>
+</div>
+<!-- BOTTOM PLAYER BAR (Secondary Controls) -->
+<div class="mt-auto p-gutter bg-surface-container border-t border-outline-variant flex flex-col gap-4">
+<div class="flex justify-between items-center text-on-surface-variant">
+<span class="text-label-sm">Session Progress</span>
+<span class="text-label-sm font-mono">03:45 Left</span>
+</div>
+
+</div>
+</aside>
+</div>
+</main>
+<!-- FLOATING ACTION CONTROLS (BottomNavBar Anchor) -->
+<nav class="fixed bottom-6 left-1/2 -translate-x-1/2 w-auto rounded-full px-4 py-2 bg-surface-container border border-outline-variant shadow-lg flex items-center gap-1 z-50">
+<button class="flex items-center gap-2 px-4 py-2 text-secondary hover:bg-surface-container-high rounded-full transition-colors active:scale-90">
+<span class="material-symbols-outlined">speed</span>
+<span class="font-label-sm">Speed</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 text-secondary hover:bg-surface-container-high rounded-full transition-colors active:scale-90">
+<span class="material-symbols-outlined">replay</span>
+<span class="font-label-sm">Replay</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 bg-primary text-on-primary rounded-full transition-all active:scale-95 shadow-md">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">repeat</span>
+<span class="font-label-sm">Loop</span>
+</button>
+<button class="flex items-center gap-2 px-4 py-2 text-secondary hover:bg-surface-container-high rounded-full transition-colors active:scale-90">
+<span class="material-symbols-outlined">mic</span>
+<span class="font-label-sm">Record</span>
+</button>
+</nav>
+<script>
+        // Micro-interaction: Waveform placeholder simulation
+        document.addEventListener('DOMContentLoaded', () => {
+            const playBtn = document.querySelector('button .material-symbols-outlined[style*="play_arrow"]');
+            if(playBtn) {
+                playBtn.parentElement.addEventListener('click', () => {
+                    const icon = playBtn;
+                    icon.innerText = icon.innerText === 'play_arrow' ? 'pause' : 'play_arrow';
+                });
+            }
+
+            // Simple active state toggle for sidebar (not fully functional without routing, but for demo)
+            const navItems = document.querySelectorAll('aside nav a');
+            navItems.forEach(item => {
+                item.addEventListener('click', (e) => {
+                    navItems.forEach(i => {
+                        i.classList.remove('bg-secondary-container', 'text-primary', 'font-bold');
+                        i.classList.add('text-secondary');
+                        i.querySelector('.material-symbols-outlined').style.fontVariationSettings = "'FILL' 0";
+                    });
+                    item.classList.add('bg-secondary-container', 'text-primary', 'font-bold');
+                    item.classList.remove('text-secondary');
+                    item.querySelector('.material-symbols-outlined').style.fontVariationSettings = "'FILL' 1";
+                });
+            });
+        });
+    </script>
+
+
+</body></html>
