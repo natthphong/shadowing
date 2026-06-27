@@ -9182,53 +9182,40 @@ const useAppStore = create((set, get) => ({
     playbackSpeed: 1
   })
 }));
+function fitText(el2, minPx, maxPx) {
+  const inner = el2.firstElementChild;
+  if (!inner) return;
+  const availH = el2.clientHeight;
+  const availW = el2.clientWidth;
+  if (availH < 4 || availW < 4) return;
+  const margin = 4;
+  el2.style.fontSize = `${minPx}px`;
+  if (inner.scrollHeight > availH - margin || inner.scrollWidth > availW - margin) return;
+  el2.style.fontSize = `${maxPx}px`;
+  if (inner.scrollHeight <= availH - margin && inner.scrollWidth <= availW - margin) return;
+  let lo = minPx, hi2 = maxPx;
+  while (hi2 - lo > 0.5) {
+    const mid = (lo + hi2) / 2;
+    el2.style.fontSize = `${mid}px`;
+    if (inner.scrollHeight > availH - margin || inner.scrollWidth > availW - margin) hi2 = mid;
+    else lo = mid;
+  }
+  el2.style.fontSize = `${Math.floor(lo * 2) / 2}px`;
+}
 function useAutoFitText(ref, text, { minPx = 18, maxPx = 52 } = {}) {
-  const busy = reactExports.useRef(false);
-  const lastSize = reactExports.useRef(maxPx);
+  reactExports.useLayoutEffect(() => {
+    const el2 = ref.current;
+    if (!el2) return;
+    fitText(el2, minPx, maxPx);
+  }, [text, minPx, maxPx, ref]);
   reactExports.useEffect(() => {
     const el2 = ref.current;
     if (!el2) return;
-    const fit = () => {
-      if (busy.current) return;
-      busy.current = true;
-      let lo = minPx;
-      let hi2 = maxPx;
-      el2.style.fontSize = `${minPx}px`;
-      const minOverflows = el2.scrollHeight > el2.clientHeight + 1 || el2.scrollWidth > el2.clientWidth + 1;
-      if (minOverflows) {
-        lastSize.current = minPx;
-        busy.current = false;
-        return;
-      }
-      while (hi2 - lo > 0.5) {
-        const mid = (lo + hi2) / 2;
-        el2.style.fontSize = `${mid}px`;
-        const overflows = el2.scrollHeight > el2.clientHeight + 1 || el2.scrollWidth > el2.clientWidth + 1;
-        if (overflows) {
-          hi2 = mid;
-        } else {
-          lo = mid;
-        }
-      }
-      const fitted = Math.floor(lo * 2) / 2;
-      if (fitted !== lastSize.current) {
-        el2.style.fontSize = `${fitted}px`;
-        lastSize.current = fitted;
-      } else {
-        el2.style.fontSize = `${fitted}px`;
-      }
-      busy.current = false;
-    };
-    const timer = setTimeout(fit, 16);
-    const ro = new ResizeObserver(() => {
-      requestAnimationFrame(fit);
-    });
+    fitText(el2, minPx, maxPx);
+    const ro = new ResizeObserver(() => fitText(el2, minPx, maxPx));
     ro.observe(el2);
-    return () => {
-      clearTimeout(timer);
-      ro.disconnect();
-    };
-  }, [text, minPx, maxPx, ref]);
+    return () => ro.disconnect();
+  }, [minPx, maxPx, ref]);
 }
 const VIDEO_TYPES = /* @__PURE__ */ new Set(["mp4", "mov", "mkv", "avi", "webm"]);
 function Practice() {
@@ -9243,6 +9230,7 @@ function Practice() {
   const [playbackSpeed, setPlaybackSpeed] = reactExports.useState(1);
   const [looping, setLooping] = reactExports.useState(false);
   const [autoPlay, setAutoPlay] = reactExports.useState(false);
+  const [showTranscript, setShowTranscript] = reactExports.useState(true);
   const [isMediaPlaying, setIsMediaPlaying] = reactExports.useState(false);
   const [mediaProgress, setMediaProgress] = reactExports.useState(0);
   const [isRecording, setIsRecording] = reactExports.useState(false);
@@ -9263,6 +9251,7 @@ function Practice() {
   const ttsAudioRef = reactExports.useRef(null);
   const audioRef = reactExports.useRef(null);
   const videoRef = reactExports.useRef(null);
+  const mediaSrcRef = reactExports.useRef("");
   const mediaRecorderRef = reactExports.useRef(null);
   const chunksRef = reactExports.useRef([]);
   const recordingStartRef = reactExports.useRef(0);
@@ -9278,10 +9267,12 @@ function Practice() {
   const sourceType = session?.source_type || "";
   const isYouTube = sourceType === "youtube";
   const isVideoFile = VIDEO_TYPES.has(sourceType);
+  const localMedia = session?.local_media_path || "";
+  const isPlayableVideo = isVideoFile || isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia);
   const showVideoPlayer = isYouTube || isVideoFile;
   const getMediaEl = reactExports.useCallback(
-    () => isVideoFile ? videoRef.current : audioRef.current,
-    [isVideoFile]
+    () => isPlayableVideo ? videoRef.current : audioRef.current,
+    [isPlayableVideo]
   );
   reactExports.useEffect(() => {
     if (!sessionId) return;
@@ -9355,26 +9346,36 @@ function Practice() {
     if (!s || !mediaPath) return;
     const el2 = getMediaEl();
     if (!el2) return;
-    el2.src = `file://${mediaPath}`;
-    el2.playbackRate = playbackSpeed;
-    el2.currentTime = s.start_time;
-    el2.play().catch(() => {
-    });
+    const newSrc = `file://${mediaPath}`;
+    const doPlay = () => {
+      el2.playbackRate = playbackSpeed;
+      el2.currentTime = s.start_time;
+      el2.play().catch(() => {
+      });
+      el2.ontimeupdate = () => {
+        const segDur = s.end_time - s.start_time;
+        if (segDur > 0) {
+          setMediaProgress(Math.min(100, (el2.currentTime - s.start_time) / segDur * 100));
+        }
+        if (el2.currentTime >= s.end_time) {
+          el2.pause();
+          el2.ontimeupdate = null;
+          setIsMediaPlaying(false);
+          setMediaProgress(100);
+          if (looping) setTimeout(() => playSegment(s), 500);
+        }
+      };
+    };
     setIsMediaPlaying(true);
     setMediaProgress(0);
-    el2.ontimeupdate = () => {
-      const segDur = s.end_time - s.start_time;
-      if (segDur > 0) {
-        setMediaProgress(Math.min(100, (el2.currentTime - s.start_time) / segDur * 100));
-      }
-      if (el2.currentTime >= s.end_time) {
-        el2.pause();
-        el2.ontimeupdate = null;
-        setIsMediaPlaying(false);
-        setMediaProgress(100);
-        if (looping) setTimeout(() => playSegment(s), 500);
-      }
-    };
+    if (mediaSrcRef.current === newSrc && el2.readyState >= 1) {
+      doPlay();
+    } else {
+      mediaSrcRef.current = newSrc;
+      el2.src = newSrc;
+      el2.addEventListener("loadedmetadata", doPlay, { once: true });
+      el2.load();
+    }
   }, [currentSegment, session, playbackSpeed, looping, getMediaEl]);
   const pauseMedia = reactExports.useCallback(() => {
     const el2 = getMediaEl();
@@ -9528,7 +9529,7 @@ function Practice() {
   }
   const words = currentSegment?.original.split(/\s+/).filter(Boolean) ?? [];
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-screen overflow-hidden bg-background", children: [
-    !isVideoFile && /* @__PURE__ */ jsxRuntimeExports.jsx("audio", { ref: audioRef, className: "hidden" }),
+    !isPlayableVideo && /* @__PURE__ */ jsxRuntimeExports.jsx("audio", { ref: audioRef, className: "hidden" }),
     flashcardToast && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `fixed top-20 right-4 z-[100] px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 text-sm font-semibold ${flashcardToast.type === "success" ? "bg-tertiary text-white" : flashcardToast.type === "exists" ? "bg-[#f59e0b] text-white" : "bg-error text-on-error"}`, children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", style: { fontVariationSettings: "'FILL' 1" }, children: flashcardToast.type === "success" ? "check_circle" : flashcardToast.type === "exists" ? "info" : "error" }),
       flashcardToast.msg
@@ -9543,22 +9544,50 @@ function Practice() {
           "%"
         ] })
       ] }) }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-6 no-drag", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hidden md:flex gap-5", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-4 no-drag", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "hidden md:flex gap-1", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "button",
             {
-              onClick: () => setShowTranslation((v2) => !v2),
-              className: `text-sm font-semibold pb-1 border-b-2 transition-colors ${showTranslation ? "text-primary border-primary" : "text-secondary border-transparent hover:text-primary"}`,
-              children: "Translation"
+              onClick: () => setShowTranscript((v2) => !v2),
+              title: showTranscript ? "Hide transcript panel" : "Show transcript panel",
+              className: `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${showTranscript ? "bg-surface-container text-on-surface" : "text-secondary hover:bg-surface-container"}`,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: showTranscript ? "menu_open" : "menu" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden lg:inline", children: "Transcript" })
+              ]
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              onClick: () => {
+                setShowTranslation((v2) => {
+                  if (v2) {
+                    setSelectedText("");
+                    setTranslationResult("");
+                  }
+                  return !v2;
+                });
+              },
+              title: showTranslation ? "Hide Thai subtitle" : "Show Thai subtitle",
+              className: `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${showTranslation ? "bg-surface-container text-on-surface" : "text-secondary hover:bg-surface-container"}`,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "translate" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden lg:inline", children: "Translate" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
             "button",
             {
               onClick: () => setShowIPA((v2) => !v2),
-              className: `text-sm font-semibold pb-1 border-b-2 transition-colors ${showIPA ? "text-primary border-primary" : "text-secondary border-transparent hover:text-primary"}`,
-              children: "IPA"
+              title: showIPA ? "Hide IPA" : "Show IPA",
+              className: `flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${showIPA ? "bg-surface-container text-on-surface" : "text-secondary hover:bg-surface-container"}`,
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "abc" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden lg:inline", children: "IPA" })
+              ]
             }
           )
         ] }),
@@ -9586,36 +9615,34 @@ function Practice() {
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 min-h-0 overflow-hidden", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-[3] min-w-0 flex flex-col overflow-hidden p-gutter gap-4 pb-20", children: [
-        showVideoPlayer && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-          "div",
-          {
-            className: "relative w-full shrink-0 rounded-2xl overflow-hidden bg-on-surface shadow-md",
-            style: { aspectRatio: "16/9", maxHeight: "min(35vh, 220px)" },
-            children: [
-              isVideoFile && /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "video",
-                {
-                  ref: videoRef,
-                  src: session.local_media_path ? `file://${session.local_media_path}` : void 0,
-                  className: "absolute inset-0 w-full h-full object-contain",
-                  playsInline: true
-                }
-              ),
-              isYouTube && session.thumbnail && /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: session.thumbnail, className: "absolute inset-0 w-full h-full object-cover opacity-80", alt: session.title }),
-              isYouTube && !session.thumbnail && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-white font-semibold text-sm truncate", children: session.title }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx(
-                "button",
-                {
-                  onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
-                  className: "absolute inset-0 flex items-center justify-center group",
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-white text-4xl", style: { fontVariationSettings: "'FILL' 1" }, children: isMediaPlaying ? "pause" : "play_arrow" }) })
-                }
-              ),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 w-full bg-white/30 rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 h-full bg-primary rounded-full transition-all", style: { width: `${mediaProgress}%` } }) }) })
-            ]
-          }
-        ),
+        showVideoPlayer && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md", children: [
+          isPlayableVideo ? (
+            /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              "video",
+              {
+                ref: videoRef,
+                src: localMedia ? `file://${localMedia}` : void 0,
+                poster: session.thumbnail || void 0,
+                className: "absolute inset-0 w-full h-full object-contain",
+                playsInline: true
+              }
+            )
+          ) : isYouTube ? (
+            /* YouTube audio-only fallback: show thumbnail */
+            session.thumbnail ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: session.thumbnail, className: "absolute inset-0 w-full h-full object-cover opacity-80", alt: session.title }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" })
+          ) : null,
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-white font-semibold text-sm truncate", children: session.title }) }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
+              className: "absolute inset-0 flex items-center justify-center group",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-white text-4xl", style: { fontVariationSettings: "'FILL' 1" }, children: isMediaPlaying ? "pause" : "play_arrow" }) })
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 w-full bg-white/30 rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 h-full bg-primary rounded-full transition-all", style: { width: `${mediaProgress}%` } }) }) })
+        ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "flex-1 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 flex flex-col items-center gap-2 pt-4 px-6", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2 flex-wrap justify-center", children: [
@@ -9667,36 +9694,42 @@ function Practice() {
             "div",
             {
               ref: sentenceBoxRef,
-              className: "flex-1 min-h-0 overflow-hidden flex flex-wrap items-center justify-center content-center gap-x-[0.35em] gap-y-[0.45em] px-8 py-2 cursor-text",
-              onMouseUp: handleTextSelect,
-              children: words.map((word, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight", children: word }),
-                showIPA && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "font-ipa-label text-[0.5em] text-secondary mt-[0.2em] tracking-wider", children: [
-                  "/",
-                  word.toLowerCase().replace(/[^a-z]/g, ""),
-                  "/"
-                ] })
-              ] }, i))
+              className: "flex-1 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1",
+              children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "div",
+                {
+                  className: "flex flex-wrap justify-center gap-x-[0.35em] gap-y-[0.35em] cursor-text",
+                  onMouseUp: handleTextSelect,
+                  children: words.map((word, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight", children: word }),
+                    showIPA && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "font-ipa-label text-[0.5em] text-secondary mt-[0.2em] tracking-wider", children: [
+                      "/",
+                      word.toLowerCase().replace(/[^a-z]/g, ""),
+                      "/"
+                    ] })
+                  ] }, i))
+                }
+              )
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 flex flex-col items-center gap-2.5 px-6 pb-4", children: [
-            showTranslation && currentSegment?.translate && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-on-surface-variant italic opacity-75 text-sm text-center px-2 leading-relaxed", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 flex flex-col items-center gap-2 px-4 pb-3", children: [
+            showTranslation && currentSegment?.translate && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-on-surface-variant italic opacity-75 text-[11px] text-center truncate max-w-full px-2", children: [
               '"',
               currentSegment.translate,
               '"'
             ] }),
-            selectedText && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-lg px-3 py-2 bg-secondary-container rounded-xl flex items-center gap-2", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-primary shrink-0", children: selectedText }),
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-outline-variant text-xs", children: "→" }),
-              translating ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-secondary animate-pulse flex-1 text-left", children: "Translating..." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-on-surface flex-1 text-left", children: translationResult }),
+            selectedText && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-lg px-3 py-1.5 bg-secondary-container rounded-xl flex items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-semibold text-primary shrink-0", children: selectedText }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-outline-variant text-[10px]", children: "→" }),
+              translating ? /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] text-secondary animate-pulse flex-1 text-left", children: "Translating..." }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[11px] text-on-surface flex-1 text-left", children: translationResult }),
               !translating && translationResult && /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
                   onClick: () => playTts(selectedText),
                   disabled: ttsPlaying,
                   title: "Play pronunciation",
-                  className: `shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all ${ttsPlaying ? "bg-tertiary text-white animate-pulse" : "hover:bg-surface-container-high text-secondary"}`,
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", style: { fontVariationSettings: "'FILL' 1" }, children: "record_voice_over" })
+                  className: `shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all ${ttsPlaying ? "bg-tertiary text-white animate-pulse" : "hover:bg-surface-container-high text-secondary"}`,
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", style: { fontVariationSettings: "'FILL' 1" }, children: "record_voice_over" })
                 }
               ),
               !translating && translationResult && /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -9704,30 +9737,27 @@ function Practice() {
                 {
                   onClick: addToFlashcard,
                   title: "Add to flashcards",
-                  className: "shrink-0 w-7 h-7 rounded-full flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors",
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "bookmark_add" })
+                  className: "shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", children: "bookmark_add" })
                 }
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => {
                 setSelectedText("");
                 setTranslationResult("");
-              }, className: "shrink-0 text-secondary hover:text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: "close" }) })
+              }, className: "shrink-0 text-secondary hover:text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", children: "close" }) })
             ] }),
-            lastScores && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-lg px-4 py-2.5 bg-tertiary-container/10 border border-tertiary-container/20 rounded-xl flex items-center gap-3", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-start flex-1 min-w-0", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `font-label-sm flex items-center gap-1 uppercase tracking-wider ${scoreColor(lastScores.overall_score)}`, children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", style: { fontVariationSettings: "'FILL' 1" }, children: "stars" }),
-                  "Last: ",
-                  lastScores.overall_score,
-                  "%"
-                ] }),
-                userTranscript && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-on-surface-variant mt-0.5 text-left text-[11px] truncate w-full", children: [
-                  '"',
-                  userTranscript,
-                  '"'
-                ] })
+            lastScores && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-lg px-3 py-1.5 bg-tertiary-container/10 border border-tertiary-container/20 rounded-xl flex items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-[11px] font-semibold flex items-center gap-1 shrink-0 ${scoreColor(lastScores.overall_score)}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[12px]", style: { fontVariationSettings: "'FILL' 1" }, children: "stars" }),
+                lastScores.overall_score,
+                "%"
               ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2 text-[10px] shrink-0", children: [
+              userTranscript && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-on-surface-variant text-[10px] truncate flex-1", children: [
+                '"',
+                userTranscript,
+                '"'
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2 text-[10px] shrink-0 ml-auto", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: scoreColor(lastScores.accuracy_score), children: [
                   "Acc ",
                   lastScores.accuracy_score,
@@ -9737,36 +9767,31 @@ function Practice() {
                   "Rhy ",
                   lastScores.rhythm_score,
                   "%"
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: scoreColor(lastScores.speed_score), children: [
-                  "Spd ",
-                  lastScores.speed_score,
-                  "%"
                 ] })
               ] })
             ] }),
-            isRecording && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-end gap-1 h-6", children: Array.from({ length: 12 }, (_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "waveform-bar", style: { animationDelay: `${i * 0.07}s` } }, i)) }),
-            transcribing && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-secondary text-xs", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-sm", children: "refresh" }),
-              "Transcribing with Whisper..."
+            isRecording && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-end gap-0.5 h-4", children: Array.from({ length: 10 }, (_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "waveform-bar", style: { animationDelay: `${i * 0.07}s` } }, i)) }),
+            transcribing && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-1.5 text-secondary text-[11px]", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[14px]", children: "refresh" }),
+              "Transcribing..."
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-4", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
                   onClick: () => setCurrentIdx((i) => Math.max(0, i - 1)),
                   disabled: currentIdx === 0,
-                  className: "w-11 h-11 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "skip_previous" })
+                  className: "w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", children: "skip_previous" })
                 }
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
                   onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
-                  className: `w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all ${isMediaPlaying ? "border-primary bg-primary-fixed text-primary" : "border-outline-variant text-secondary hover:bg-surface-container"}`,
+                  className: `w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${isMediaPlaying ? "border-primary bg-primary-fixed text-primary" : "border-outline-variant text-secondary hover:bg-surface-container"}`,
                   title: "Play / Pause segment",
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }, children: isMediaPlaying ? "pause" : "play_arrow" })
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }, children: isMediaPlaying ? "pause" : "play_arrow" })
                 }
               ),
               /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -9775,18 +9800,18 @@ function Practice() {
                   onClick: () => playTts(),
                   disabled: ttsPlaying,
                   title: "AI Voice",
-                  className: `w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all ${ttsPlaying ? "border-tertiary bg-tertiary-container animate-pulse text-tertiary" : "border-outline-variant text-secondary hover:bg-surface-container"} disabled:opacity-60`,
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: ttsPlaying ? "volume_up" : "record_voice_over" })
+                  className: `w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${ttsPlaying ? "border-tertiary bg-tertiary-container animate-pulse text-tertiary" : "border-outline-variant text-secondary hover:bg-surface-container"} disabled:opacity-60`,
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: "'FILL' 1" }, children: ttsPlaying ? "volume_up" : "record_voice_over" })
                 }
               ),
               isRecording ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
                   onClick: stopRecording,
-                  className: "px-8 py-3 bg-error text-on-error rounded-full flex items-center gap-2 shadow-md recording-active",
+                  className: "px-5 py-2 bg-error text-on-error rounded-full flex items-center gap-1.5 shadow-md recording-active text-sm font-bold",
                   children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-2xl", style: { fontVariationSettings: "'FILL' 1" }, children: "stop" }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-bold", children: "Stop" })
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", style: { fontVariationSettings: "'FILL' 1" }, children: "stop" }),
+                    "Stop"
                   ]
                 }
               ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
@@ -9794,10 +9819,10 @@ function Practice() {
                 {
                   onClick: startRecording,
                   disabled: transcribing,
-                  className: "px-8 py-3 bg-primary text-on-primary rounded-full flex items-center gap-2 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50",
+                  className: "px-5 py-2 bg-primary text-on-primary rounded-full flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50 text-sm font-bold",
                   children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-2xl", style: { fontVariationSettings: "'FILL' 1" }, children: "mic" }),
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-bold", children: "Record" })
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", style: { fontVariationSettings: "'FILL' 1" }, children: "mic" }),
+                    "Record"
                   ]
                 }
               ),
@@ -9806,29 +9831,29 @@ function Practice() {
                 {
                   onClick: () => setCurrentIdx((i) => Math.min(segments.length - 1, i + 1)),
                   disabled: currentIdx === segments.length - 1,
-                  className: "w-11 h-11 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
-                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "skip_next" })
+                  className: "w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", children: "skip_next" })
                 }
               )
             ] }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-sm", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1.5 bg-surface-container rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute h-full bg-primary rounded-full transition-all", style: { width: `${completionPct}%` } }) }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between mt-1 text-[10px] text-secondary font-mono", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-full max-w-xs", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 bg-surface-container rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute h-full bg-primary rounded-full transition-all", style: { width: `${completionPct}%` } }) }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between mt-0.5 text-[10px] text-secondary font-mono", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                   currentIdx + 1,
-                  " of ",
+                  "/",
                   segments.length
                 ] }),
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
                   completionPct,
-                  "% done"
+                  "%"
                 ] })
               ] })
             ] })
           ] })
         ] })
       ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: "flex-[1.2] min-w-[280px] max-w-[360px] bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-hidden", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("aside", { className: `flex-[1.2] min-w-[280px] max-w-[360px] bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-hidden transition-all ${showTranscript ? "" : "hidden"}`, children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-4 shrink-0 border-b border-outline-variant flex items-center justify-between", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "font-bold text-on-surface", children: "Full Transcript" }),
           /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "bg-tertiary text-white px-2 py-1 rounded text-[10px] font-bold", children: [
@@ -10429,7 +10454,7 @@ function Settings() {
     ] }) })
   ] });
 }
-const APP_VERSION = "0.0.5";
+const APP_VERSION = "0.0.8";
 function App() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(HashRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden bg-surface text-on-surface relative", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),

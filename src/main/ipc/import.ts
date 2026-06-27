@@ -7,7 +7,7 @@ import log from 'electron-log'
 import { getDb, getMediaDir } from '../services/database'
 import { transcribeAudio, segmentizeTranscript, WhisperSegment } from '../services/whisper'
 import { extractAudio, getMediaDuration } from '../services/ffmpeg'
-import { fetchYtMetadata, downloadYtAudio } from '../services/youtube'
+import { fetchYtMetadata, downloadYtAudio, downloadYtVideo } from '../services/youtube'
 import { bulkTranslateSegments } from '../services/ollama'
 import { generateTts } from '../services/tts'
 import { FFMPEG_PATH, CHILD_ENV } from '../services/paths'
@@ -103,14 +103,34 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
       sendProgress(win, 'metadata', 'Fetching YouTube metadata...', 5)
       const meta = await fetchYtMetadata(url)
 
-      sendProgress(win, 'download', 'Downloading audio...', 10)
-      const audioPath = await downloadYtAudio(url, mediaDir, (msg) =>
-        sendProgress(win, 'download', msg, 15)
-      )
+      // Try video download first (so the player can show actual video).
+      // Fall back to audio-only if the video download fails.
+      let localMediaPath: string
+      let whisperAudioPath: string
 
-      sendProgress(win, 'transcribe', 'Transcribing with Whisper...', 35)
-      const whisperResult = await transcribeAudio(audioPath, (msg) =>
-        sendProgress(win, 'transcribe', msg, 40)
+      try {
+        sendProgress(win, 'download', 'Downloading video (≤480p)...', 10)
+        const videoPath = await downloadYtVideo(url, mediaDir, (msg) =>
+          sendProgress(win, 'download', msg, 25)
+        )
+        localMediaPath = videoPath
+
+        sendProgress(win, 'extract', 'Extracting audio for transcription...', 30)
+        whisperAudioPath = await extractAudio(videoPath, mediaDir, (msg) =>
+          sendProgress(win, 'extract', msg, 35)
+        )
+      } catch (videoErr) {
+        log.warn('[YouTube import] Video download failed, falling back to audio-only:', videoErr)
+        sendProgress(win, 'download', 'Downloading audio (video unavailable)...', 10)
+        whisperAudioPath = await downloadYtAudio(url, mediaDir, (msg) =>
+          sendProgress(win, 'download', msg, 30)
+        )
+        localMediaPath = whisperAudioPath
+      }
+
+      sendProgress(win, 'transcribe', 'Transcribing with Whisper...', 38)
+      const whisperResult = await transcribeAudio(whisperAudioPath, (msg) =>
+        sendProgress(win, 'transcribe', msg, 43)
       )
 
       sendProgress(win, 'segment', 'Segmenting transcript...', 65)
@@ -125,7 +145,7 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
 
       db.prepare(
         'INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(sourceId, 'youtube', meta.title, url, audioPath, meta.thumbnail || '', meta.duration || 0, new Date().toISOString())
+      ).run(sourceId, 'youtube', meta.title, url, localMediaPath, meta.thumbnail || '', meta.duration || 0, new Date().toISOString())
 
       db.prepare(
         'INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)'
@@ -150,9 +170,10 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
       const ext = path.extname(filePath).toLowerCase()
       const title = path.basename(filePath, ext)
 
+      const isVideoFile = ['.mp4', '.mov', '.mkv', '.avi', '.webm'].includes(ext)
       let audioPath = filePath
 
-      if (['.mp4', '.mov', '.mkv', '.avi', '.webm'].includes(ext)) {
+      if (isVideoFile) {
         sendProgress(win, 'extract', 'Extracting audio...', 10)
         audioPath = await extractAudio(filePath, mediaDir, (msg) =>
           sendProgress(win, 'extract', msg, 15)
@@ -174,14 +195,27 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
       const sourceId = `src_${uuidv4()}`
       const sessionId = `ses_${uuidv4()}`
 
-      const destPath = path.join(mediaDir, path.basename(audioPath))
-      if (audioPath !== destPath && !fs.existsSync(destPath)) {
-        fs.copyFileSync(audioPath, destPath)
+      // Video files: copy the ORIGINAL video to mediaDir so the player can display it.
+      // (The extracted WAV in audioPath was only needed for Whisper transcription.)
+      // Audio files: copy the audio itself to mediaDir as usual.
+      let mediaPath: string
+      if (isVideoFile) {
+        const videoDestPath = path.join(mediaDir, path.basename(filePath))
+        if (filePath !== videoDestPath && !fs.existsSync(videoDestPath)) {
+          fs.copyFileSync(filePath, videoDestPath)
+        }
+        mediaPath = fs.existsSync(videoDestPath) ? videoDestPath : filePath
+      } else {
+        const destPath = path.join(mediaDir, path.basename(audioPath))
+        if (audioPath !== destPath && !fs.existsSync(destPath)) {
+          fs.copyFileSync(audioPath, destPath)
+        }
+        mediaPath = destPath
       }
 
       db.prepare(
         'INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(sourceId, ext.slice(1) || 'audio', title, '', destPath, '', 0, new Date().toISOString())
+      ).run(sourceId, ext.slice(1) || 'audio', title, '', mediaPath, '', 0, new Date().toISOString())
 
       db.prepare(
         'INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)'

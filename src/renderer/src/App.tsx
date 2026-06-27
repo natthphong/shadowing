@@ -7,7 +7,7 @@ import Flashcards from './pages/Flashcards'
 import Grammar from './pages/Grammar'
 import Settings from './pages/Settings'
 
-const APP_VERSION = '0.0.5'
+const APP_VERSION = '0.0.8'
 
 export default function App(): JSX.Element {
   return (

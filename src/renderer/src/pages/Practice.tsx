@@ -28,6 +28,7 @@ export default function Practice(): JSX.Element {
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0)
   const [looping, setLooping] = useState(false)
   const [autoPlay, setAutoPlay] = useState(false)
+  const [showTranscript, setShowTranscript] = useState(true)
 
   // Media playback state
   const [isMediaPlaying, setIsMediaPlaying] = useState(false)
@@ -62,6 +63,7 @@ export default function Practice(): JSX.Element {
   // Media refs
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const mediaSrcRef = useRef<string>('')         // tracks currently-loaded src to avoid unnecessary reloads
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const recordingStartRef = useRef<number>(0)
@@ -84,12 +86,16 @@ export default function Practice(): JSX.Element {
   const sourceType = session?.source_type || ''
   const isYouTube = sourceType === 'youtube'
   const isVideoFile = VIDEO_TYPES.has(sourceType)
+  // isPlayableVideo: true when we have an actual video file to show in <video> element.
+  // Covers local video files AND YouTube sessions where the MP4 was successfully downloaded.
+  const localMedia = session?.local_media_path || ''
+  const isPlayableVideo = isVideoFile || (isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia))
   const showVideoPlayer = isYouTube || isVideoFile
 
   const getMediaEl = useCallback(
     (): HTMLAudioElement | HTMLVideoElement | null =>
-      isVideoFile ? videoRef.current : audioRef.current,
-    [isVideoFile]
+      isPlayableVideo ? videoRef.current : audioRef.current,
+    [isPlayableVideo]
   )
 
   // ── Session load + progress restore ──────────────────────────────────────
@@ -170,25 +176,40 @@ export default function Practice(): JSX.Element {
     const el = getMediaEl()
     if (!el) return
 
-    el.src = `file://${mediaPath}`
-    el.playbackRate = playbackSpeed
-    el.currentTime = s.start_time
-    el.play().catch(() => {})
+    const newSrc = `file://${mediaPath}`
+
+    // Seek to segment start then play; wire up the stop-at-end handler.
+    const doPlay = (): void => {
+      el.playbackRate = playbackSpeed
+      el.currentTime = s.start_time
+      el.play().catch(() => {})
+      el.ontimeupdate = () => {
+        const segDur = s.end_time - s.start_time
+        if (segDur > 0) {
+          setMediaProgress(Math.min(100, ((el.currentTime - s.start_time) / segDur) * 100))
+        }
+        if (el.currentTime >= s.end_time) {
+          el.pause()
+          el.ontimeupdate = null
+          setIsMediaPlaying(false)
+          setMediaProgress(100)
+          if (looping) setTimeout(() => playSegment(s), 500)
+        }
+      }
+    }
+
     setIsMediaPlaying(true)
     setMediaProgress(0)
 
-    el.ontimeupdate = () => {
-      const segDur = s.end_time - s.start_time
-      if (segDur > 0) {
-        setMediaProgress(Math.min(100, ((el.currentTime - s.start_time) / segDur) * 100))
-      }
-      if (el.currentTime >= s.end_time) {
-        el.pause()
-        el.ontimeupdate = null
-        setIsMediaPlaying(false)
-        setMediaProgress(100)
-        if (looping) setTimeout(() => playSegment(s), 500)
-      }
+    if (mediaSrcRef.current === newSrc && el.readyState >= 1) {
+      // Media already loaded at this source — just seek and play, no reload needed.
+      doPlay()
+    } else {
+      // New source or not loaded yet — set src, wait for loadedmetadata before seeking.
+      mediaSrcRef.current = newSrc
+      el.src = newSrc
+      el.addEventListener('loadedmetadata', doPlay, { once: true })
+      el.load()
     }
   }, [currentSegment, session, playbackSpeed, looping, getMediaEl])
 
@@ -363,8 +384,8 @@ export default function Practice(): JSX.Element {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
-      {/* Hidden audio element for non-video playback */}
-      {!isVideoFile && <audio ref={audioRef} className="hidden" />}
+      {/* Hidden audio element — only for sessions without a playable video file */}
+      {!isPlayableVideo && <audio ref={audioRef} className="hidden" />}
 
       {/* Flashcard toast */}
       {flashcardToast && (
@@ -392,19 +413,48 @@ export default function Practice(): JSX.Element {
             <span className="bg-primary-fixed text-on-primary-fixed px-2 py-0.5 rounded text-[10px] font-bold">{completionPct}%</span>
           </nav>
         </div>
-        <div className="flex items-center gap-6 no-drag">
-          <div className="hidden md:flex gap-5">
+        <div className="flex items-center gap-4 no-drag">
+          {/* View toggles */}
+          <div className="hidden md:flex gap-1">
+            {/* Transcript panel toggle */}
             <button
-              onClick={() => setShowTranslation((v) => !v)}
-              className={`text-sm font-semibold pb-1 border-b-2 transition-colors ${showTranslation ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+              onClick={() => setShowTranscript((v) => !v)}
+              title={showTranscript ? 'Hide transcript panel' : 'Show transcript panel'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                showTranscript ? 'bg-surface-container text-on-surface' : 'text-secondary hover:bg-surface-container'
+              }`}
             >
-              Translation
+              <span className="material-symbols-outlined text-[18px]">
+                {showTranscript ? 'menu_open' : 'menu'}
+              </span>
+              <span className="hidden lg:inline">Transcript</span>
             </button>
+            {/* Translation (Thai subtitle) toggle */}
+            <button
+              onClick={() => {
+                setShowTranslation((v) => {
+                  if (v) { setSelectedText(''); setTranslationResult('') }
+                  return !v
+                })
+              }}
+              title={showTranslation ? 'Hide Thai subtitle' : 'Show Thai subtitle'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                showTranslation ? 'bg-surface-container text-on-surface' : 'text-secondary hover:bg-surface-container'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">translate</span>
+              <span className="hidden lg:inline">Translate</span>
+            </button>
+            {/* IPA toggle */}
             <button
               onClick={() => setShowIPA((v) => !v)}
-              className={`text-sm font-semibold pb-1 border-b-2 transition-colors ${showIPA ? 'text-primary border-primary' : 'text-secondary border-transparent hover:text-primary'}`}
+              title={showIPA ? 'Hide IPA' : 'Show IPA'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                showIPA ? 'bg-surface-container text-on-surface' : 'text-secondary hover:bg-surface-container'
+              }`}
             >
-              IPA
+              <span className="material-symbols-outlined text-[18px]">abc</span>
+              <span className="hidden lg:inline">IPA</span>
             </button>
           </div>
           <div className="flex items-center gap-3">
@@ -438,24 +488,22 @@ export default function Practice(): JSX.Element {
 
           {/* ── Video player card (YouTube / video file only) ── */}
           {showVideoPlayer && (
-            <div
-              className="relative w-full shrink-0 rounded-2xl overflow-hidden bg-on-surface shadow-md"
-              style={{ aspectRatio: '16/9', maxHeight: 'min(35vh, 220px)' }}
-            >
-              {isVideoFile && (
+            <div className="flex-1 min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md">
+              {isPlayableVideo ? (
+                /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
                 <video
                   ref={videoRef}
-                  src={session.local_media_path ? `file://${session.local_media_path}` : undefined}
+                  src={localMedia ? `file://${localMedia}` : undefined}
+                  poster={session.thumbnail || undefined}
                   className="absolute inset-0 w-full h-full object-contain"
                   playsInline
                 />
-              )}
-              {isYouTube && session.thumbnail && (
-                <img src={session.thumbnail} className="absolute inset-0 w-full h-full object-cover opacity-80" alt={session.title} />
-              )}
-              {isYouTube && !session.thumbnail && (
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" />
-              )}
+              ) : isYouTube ? (
+                /* YouTube audio-only fallback: show thumbnail */
+                session.thumbnail
+                  ? <img src={session.thumbnail} className="absolute inset-0 w-full h-full object-cover opacity-80" alt={session.title} />
+                  : <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" />
+              ) : null}
               <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent">
                 <p className="text-white font-semibold text-sm truncate">{session.title}</p>
               </div>
@@ -518,133 +566,134 @@ export default function Practice(): JSX.Element {
               </div>
             </div>
 
-            {/* ── SENTENCE AREA ────────────────────────────────────────────
-                flex-1 min-h-0 overflow-hidden: the only area that flexes.
-                useAutoFitText hook writes font-size to this element directly.
-                Words inherit that font-size; gaps scale in em so they shrink
-                proportionally with shorter fonts.
+            {/* ── SENTENCE AREA ─────────────────────────────────────────────
+                Outer div: flex centering container — hook sets font-size here.
+                Inner div: flex-wrap word container — hook measures ITS scrollHeight
+                vs outer's clientHeight (avoids content-center scrollHeight artifact).
             ── */}
             <div
               ref={sentenceBoxRef}
-              className="flex-1 min-h-0 overflow-hidden flex flex-wrap items-center justify-center content-center gap-x-[0.35em] gap-y-[0.45em] px-8 py-2 cursor-text"
-              onMouseUp={handleTextSelect}
+              className="flex-1 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1"
             >
-              {words.map((word, i) => (
-                <div key={i} className="flex flex-col items-center">
-                  {/* No explicit font-size class — inherits from parent (hook-controlled) */}
-                  <span className="font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight">
-                    {word}
-                  </span>
-                  {showIPA && (
-                    <span className="font-ipa-label text-[0.5em] text-secondary mt-[0.2em] tracking-wider">
-                      /{word.toLowerCase().replace(/[^a-z]/g, '')}/
+              <div
+                className="flex flex-wrap justify-center gap-x-[0.35em] gap-y-[0.35em] cursor-text"
+                onMouseUp={handleTextSelect}
+              >
+                {words.map((word, i) => (
+                  <div key={i} className="flex flex-col items-center">
+                    <span className="font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight">
+                      {word}
                     </span>
-                  )}
-                </div>
-              ))}
+                    {showIPA && (
+                      <span className="font-ipa-label text-[0.5em] text-secondary mt-[0.2em] tracking-wider">
+                        /{word.toLowerCase().replace(/[^a-z]/g, '')}/
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
-            {/* ── Fixed bottom: subtitle + controls ────────────────────────
-                shrink-0: never collapses; always visible.
+            {/* ── Fixed bottom: subtitle + controls (compact) ───────────────
+                shrink-0: never collapses; all children visible always.
+                Compact sizing keeps total height ≤ ~180px so sentence area
+                retains adequate space even in 50/50 split on small screens.
             ── */}
-            <div className="shrink-0 flex flex-col items-center gap-2.5 px-6 pb-4">
+            <div className="shrink-0 flex flex-col items-center gap-2 px-4 pb-3">
 
-              {/* Thai translation */}
+              {/* Thai translation — single line, truncated */}
               {showTranslation && currentSegment?.translate && (
-                <p className="text-on-surface-variant italic opacity-75 text-sm text-center px-2 leading-relaxed">
+                <p className="text-on-surface-variant italic opacity-75 text-[11px] text-center truncate max-w-full px-2">
                   "{currentSegment.translate}"
                 </p>
               )}
 
-              {/* Word translation popup with TTS + flashcard */}
+              {/* Word translation popup */}
               {selectedText && (
-                <div className="w-full max-w-lg px-3 py-2 bg-secondary-container rounded-xl flex items-center gap-2">
-                  <span className="text-sm font-semibold text-primary shrink-0">{selectedText}</span>
-                  <span className="text-outline-variant text-xs">→</span>
+                <div className="w-full max-w-lg px-3 py-1.5 bg-secondary-container rounded-xl flex items-center gap-2">
+                  <span className="text-xs font-semibold text-primary shrink-0">{selectedText}</span>
+                  <span className="text-outline-variant text-[10px]">→</span>
                   {translating ? (
-                    <span className="text-xs text-secondary animate-pulse flex-1 text-left">Translating...</span>
+                    <span className="text-[11px] text-secondary animate-pulse flex-1 text-left">Translating...</span>
                   ) : (
-                    <span className="text-xs text-on-surface flex-1 text-left">{translationResult}</span>
+                    <span className="text-[11px] text-on-surface flex-1 text-left">{translationResult}</span>
                   )}
                   {!translating && translationResult && (
                     <button
                       onClick={() => playTts(selectedText)}
                       disabled={ttsPlaying}
                       title="Play pronunciation"
-                      className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center transition-all ${ttsPlaying ? 'bg-tertiary text-white animate-pulse' : 'hover:bg-surface-container-high text-secondary'}`}
+                      className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center transition-all ${ttsPlaying ? 'bg-tertiary text-white animate-pulse' : 'hover:bg-surface-container-high text-secondary'}`}
                     >
-                      <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>record_voice_over</span>
+                      <span className="material-symbols-outlined text-[14px]" style={{ fontVariationSettings: "'FILL' 1" }}>record_voice_over</span>
                     </button>
                   )}
                   {!translating && translationResult && (
                     <button
                       onClick={addToFlashcard}
                       title="Add to flashcards"
-                      className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors"
+                      className="shrink-0 w-6 h-6 rounded-full flex items-center justify-center hover:bg-surface-container-high text-secondary hover:text-primary transition-colors"
                     >
-                      <span className="material-symbols-outlined text-[16px]">bookmark_add</span>
+                      <span className="material-symbols-outlined text-[14px]">bookmark_add</span>
                     </button>
                   )}
                   <button onClick={() => { setSelectedText(''); setTranslationResult('') }} className="shrink-0 text-secondary hover:text-primary">
-                    <span className="material-symbols-outlined text-sm">close</span>
+                    <span className="material-symbols-outlined text-[14px]">close</span>
                   </button>
                 </div>
               )}
 
-              {/* Last attempt feedback chip */}
+              {/* Last attempt feedback — ultra compact single row */}
               {lastScores && (
-                <div className="w-full max-w-lg px-4 py-2.5 bg-tertiary-container/10 border border-tertiary-container/20 rounded-xl flex items-center gap-3">
-                  <div className="flex flex-col items-start flex-1 min-w-0">
-                    <span className={`font-label-sm flex items-center gap-1 uppercase tracking-wider ${scoreColor(lastScores.overall_score)}`}>
-                      <span className="material-symbols-outlined text-sm" style={{ fontVariationSettings: "'FILL' 1" }}>stars</span>
-                      Last: {lastScores.overall_score}%
-                    </span>
-                    {userTranscript && (
-                      <p className="text-on-surface-variant mt-0.5 text-left text-[11px] truncate w-full">"{userTranscript}"</p>
-                    )}
-                  </div>
-                  <div className="flex gap-2 text-[10px] shrink-0">
+                <div className="w-full max-w-lg px-3 py-1.5 bg-tertiary-container/10 border border-tertiary-container/20 rounded-xl flex items-center gap-2">
+                  <span className={`text-[11px] font-semibold flex items-center gap-1 shrink-0 ${scoreColor(lastScores.overall_score)}`}>
+                    <span className="material-symbols-outlined text-[12px]" style={{ fontVariationSettings: "'FILL' 1" }}>stars</span>
+                    {lastScores.overall_score}%
+                  </span>
+                  {userTranscript && (
+                    <p className="text-on-surface-variant text-[10px] truncate flex-1">"{userTranscript}"</p>
+                  )}
+                  <div className="flex gap-2 text-[10px] shrink-0 ml-auto">
                     <span className={scoreColor(lastScores.accuracy_score)}>Acc {lastScores.accuracy_score}%</span>
                     <span className={scoreColor(lastScores.rhythm_score)}>Rhy {lastScores.rhythm_score}%</span>
-                    <span className={scoreColor(lastScores.speed_score)}>Spd {lastScores.speed_score}%</span>
                   </div>
                 </div>
               )}
 
               {/* Waveform */}
               {isRecording && (
-                <div className="flex items-end gap-1 h-6">
-                  {Array.from({ length: 12 }, (_, i) => (
+                <div className="flex items-end gap-0.5 h-4">
+                  {Array.from({ length: 10 }, (_, i) => (
                     <div key={i} className="waveform-bar" style={{ animationDelay: `${i * 0.07}s` }} />
                   ))}
                 </div>
               )}
 
               {transcribing && (
-                <div className="flex items-center gap-2 text-secondary text-xs">
-                  <span className="material-symbols-outlined animate-spin text-sm">refresh</span>
-                  Transcribing with Whisper...
+                <div className="flex items-center gap-1.5 text-secondary text-[11px]">
+                  <span className="material-symbols-outlined animate-spin text-[14px]">refresh</span>
+                  Transcribing...
                 </div>
               )}
 
-              {/* Transport controls */}
-              <div className="flex items-center gap-4">
+              {/* Transport controls — compact w-9 h-9 buttons */}
+              <div className="flex items-center gap-3">
                 <button
                   onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
                   disabled={currentIdx === 0}
-                  className="w-11 h-11 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
+                  className="w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
                 >
-                  <span className="material-symbols-outlined">skip_previous</span>
+                  <span className="material-symbols-outlined text-[20px]">skip_previous</span>
                 </button>
 
                 <button
                   onClick={() => isMediaPlaying ? pauseMedia() : playSegment()}
-                  className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all ${
+                  className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
                     isMediaPlaying ? 'border-primary bg-primary-fixed text-primary' : 'border-outline-variant text-secondary hover:bg-surface-container'
                   }`}
                   title="Play / Pause segment"
                 >
-                  <span className="material-symbols-outlined" style={{ fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }}>
+                  <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }}>
                     {isMediaPlaying ? 'pause' : 'play_arrow'}
                   </span>
                 </button>
@@ -653,11 +702,11 @@ export default function Practice(): JSX.Element {
                   onClick={() => playTts()}
                   disabled={ttsPlaying}
                   title="AI Voice"
-                  className={`w-11 h-11 rounded-full border-2 flex items-center justify-center transition-all ${
+                  className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
                     ttsPlaying ? 'border-tertiary bg-tertiary-container animate-pulse text-tertiary' : 'border-outline-variant text-secondary hover:bg-surface-container'
                   } disabled:opacity-60`}
                 >
-                  <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: "'FILL' 1" }}>
                     {ttsPlaying ? 'volume_up' : 'record_voice_over'}
                   </span>
                 </button>
@@ -665,39 +714,39 @@ export default function Practice(): JSX.Element {
                 {isRecording ? (
                   <button
                     onClick={stopRecording}
-                    className="px-8 py-3 bg-error text-on-error rounded-full flex items-center gap-2 shadow-md recording-active"
+                    className="px-5 py-2 bg-error text-on-error rounded-full flex items-center gap-1.5 shadow-md recording-active text-sm font-bold"
                   >
-                    <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>stop</span>
-                    <span className="font-bold">Stop</span>
+                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop</span>
+                    Stop
                   </button>
                 ) : (
                   <button
                     onClick={startRecording}
                     disabled={transcribing}
-                    className="px-8 py-3 bg-primary text-on-primary rounded-full flex items-center gap-2 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+                    className="px-5 py-2 bg-primary text-on-primary rounded-full flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50 text-sm font-bold"
                   >
-                    <span className="material-symbols-outlined text-2xl" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
-                    <span className="font-bold">Record</span>
+                    <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>mic</span>
+                    Record
                   </button>
                 )}
 
                 <button
                   onClick={() => setCurrentIdx((i) => Math.min(segments.length - 1, i + 1))}
                   disabled={currentIdx === segments.length - 1}
-                  className="w-11 h-11 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
+                  className="w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
                 >
-                  <span className="material-symbols-outlined">skip_next</span>
+                  <span className="material-symbols-outlined text-[20px]">skip_next</span>
                 </button>
               </div>
 
               {/* Progress bar */}
-              <div className="w-full max-w-sm">
-                <div className="relative h-1.5 bg-surface-container rounded-full">
+              <div className="w-full max-w-xs">
+                <div className="relative h-1 bg-surface-container rounded-full">
                   <div className="absolute h-full bg-primary rounded-full transition-all" style={{ width: `${completionPct}%` }} />
                 </div>
-                <div className="flex justify-between mt-1 text-[10px] text-secondary font-mono">
-                  <span>{currentIdx + 1} of {segments.length}</span>
-                  <span>{completionPct}% done</span>
+                <div className="flex justify-between mt-0.5 text-[10px] text-secondary font-mono">
+                  <span>{currentIdx + 1}/{segments.length}</span>
+                  <span>{completionPct}%</span>
                 </div>
               </div>
 
@@ -705,8 +754,8 @@ export default function Practice(): JSX.Element {
           </section>{/* end focus card */}
         </div>{/* end left column */}
 
-        {/* RIGHT: Transcript panel */}
-        <aside className="flex-[1.2] min-w-[280px] max-w-[360px] bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-hidden">
+        {/* RIGHT: Transcript panel — hidden when showTranscript = false */}
+        <aside className={`flex-[1.2] min-w-[280px] max-w-[360px] bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-hidden transition-all ${showTranscript ? '' : 'hidden'}`}>
           <div className="p-4 shrink-0 border-b border-outline-variant flex items-center justify-between">
             <h2 className="font-bold text-on-surface">Full Transcript</h2>
             <span className="bg-tertiary text-white px-2 py-1 rounded text-[10px] font-bold">{completionPct}% Done</span>

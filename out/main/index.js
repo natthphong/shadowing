@@ -516,6 +516,51 @@ async function fetchYtMetadata(url) {
     proc.on("error", (e) => reject(new Error(`yt-dlp not found: ${e.message}`)));
   });
 }
+async function downloadYtVideo(url, outputDir, onProgress) {
+  const outTemplate = path.join(outputDir, "yt_vid_%(id)s.%(ext)s");
+  return new Promise((resolve, reject) => {
+    onProgress?.("Downloading video from YouTube...");
+    log.info("[yt-dlp video] Starting download:", url);
+    const proc = child_process.spawn(YTDLP_PATH, [
+      "-f",
+      "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]/best",
+      "--merge-output-format",
+      "mp4",
+      "--ffmpeg-location",
+      FFMPEG_PATH,
+      "--extractor-args",
+      "youtube:player_client=android,ios",
+      "--no-playlist",
+      "--no-mtime",
+      "-o",
+      outTemplate,
+      "--print",
+      "after_move:filepath",
+      url
+    ], { env: CHILD_ENV });
+    let lastLine = "";
+    let err = "";
+    proc.stdout.on("data", (d) => {
+      const line = d.toString().trim();
+      if (line) {
+        lastLine = line;
+        log.info("[yt-dlp video] stdout:", line);
+      }
+    });
+    proc.stderr.on("data", (d) => {
+      const msg = d.toString();
+      err += msg;
+      const pct = msg.match(/(\d+\.?\d*)%/);
+      if (pct) onProgress?.(`Downloading video: ${parseFloat(pct[1]).toFixed(0)}%`);
+    });
+    proc.on("close", (code) => {
+      if (code === 0 && lastLine) resolve(lastLine.trim());
+      else if (code === 0) reject(new Error("yt-dlp video: no output path received"));
+      else reject(new Error(`yt-dlp video failed (code ${code}): ${err.slice(-400)}`));
+    });
+    proc.on("error", (e) => reject(new Error(`Cannot run yt-dlp: ${e.message}`)));
+  });
+}
 async function downloadYtAudio(url, outputDir, onProgress) {
   const outTemplate = path.join(outputDir, "yt_%(id)s.%(ext)s");
   return new Promise((resolve, reject) => {
@@ -850,16 +895,36 @@ function registerImportHandlers(getWindow2) {
     try {
       sendProgress(win, "metadata", "Fetching YouTube metadata...", 5);
       const meta = await fetchYtMetadata(url);
-      sendProgress(win, "download", "Downloading audio...", 10);
-      const audioPath = await downloadYtAudio(
-        url,
-        mediaDir,
-        (msg) => sendProgress(win, "download", msg, 15)
-      );
-      sendProgress(win, "transcribe", "Transcribing with Whisper...", 35);
+      let localMediaPath;
+      let whisperAudioPath;
+      try {
+        sendProgress(win, "download", "Downloading video (≤480p)...", 10);
+        const videoPath = await downloadYtVideo(
+          url,
+          mediaDir,
+          (msg) => sendProgress(win, "download", msg, 25)
+        );
+        localMediaPath = videoPath;
+        sendProgress(win, "extract", "Extracting audio for transcription...", 30);
+        whisperAudioPath = await extractAudio(
+          videoPath,
+          mediaDir,
+          (msg) => sendProgress(win, "extract", msg, 35)
+        );
+      } catch (videoErr) {
+        log.warn("[YouTube import] Video download failed, falling back to audio-only:", videoErr);
+        sendProgress(win, "download", "Downloading audio (video unavailable)...", 10);
+        whisperAudioPath = await downloadYtAudio(
+          url,
+          mediaDir,
+          (msg) => sendProgress(win, "download", msg, 30)
+        );
+        localMediaPath = whisperAudioPath;
+      }
+      sendProgress(win, "transcribe", "Transcribing with Whisper...", 38);
       const whisperResult = await transcribeAudio(
-        audioPath,
-        (msg) => sendProgress(win, "transcribe", msg, 40)
+        whisperAudioPath,
+        (msg) => sendProgress(win, "transcribe", msg, 43)
       );
       sendProgress(win, "segment", "Segmenting transcript...", 65);
       const segments = segmentizeTranscript(whisperResult);
@@ -869,7 +934,7 @@ function registerImportHandlers(getWindow2) {
       const sessionId = `ses_${uuid.v4()}`;
       db2.prepare(
         "INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(sourceId, "youtube", meta.title, url, audioPath, meta.thumbnail || "", meta.duration || 0, (/* @__PURE__ */ new Date()).toISOString());
+      ).run(sourceId, "youtube", meta.title, url, localMediaPath, meta.thumbnail || "", meta.duration || 0, (/* @__PURE__ */ new Date()).toISOString());
       db2.prepare(
         "INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)"
       ).run(sessionId, sourceId, meta.title, (/* @__PURE__ */ new Date()).toISOString(), segments.length);
@@ -888,8 +953,9 @@ function registerImportHandlers(getWindow2) {
     try {
       const ext = path.extname(filePath).toLowerCase();
       const title = path.basename(filePath, ext);
+      const isVideoFile = [".mp4", ".mov", ".mkv", ".avi", ".webm"].includes(ext);
       let audioPath = filePath;
-      if ([".mp4", ".mov", ".mkv", ".avi", ".webm"].includes(ext)) {
+      if (isVideoFile) {
         sendProgress(win, "extract", "Extracting audio...", 10);
         audioPath = await extractAudio(
           filePath,
@@ -908,13 +974,23 @@ function registerImportHandlers(getWindow2) {
       sendProgress(win, "saving", "Saving...", 90);
       const sourceId = `src_${uuid.v4()}`;
       const sessionId = `ses_${uuid.v4()}`;
-      const destPath = path.join(mediaDir, path.basename(audioPath));
-      if (audioPath !== destPath && !fs.existsSync(destPath)) {
-        fs.copyFileSync(audioPath, destPath);
+      let mediaPath;
+      if (isVideoFile) {
+        const videoDestPath = path.join(mediaDir, path.basename(filePath));
+        if (filePath !== videoDestPath && !fs.existsSync(videoDestPath)) {
+          fs.copyFileSync(filePath, videoDestPath);
+        }
+        mediaPath = fs.existsSync(videoDestPath) ? videoDestPath : filePath;
+      } else {
+        const destPath = path.join(mediaDir, path.basename(audioPath));
+        if (audioPath !== destPath && !fs.existsSync(destPath)) {
+          fs.copyFileSync(audioPath, destPath);
+        }
+        mediaPath = destPath;
       }
       db2.prepare(
         "INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(sourceId, ext.slice(1) || "audio", title, "", destPath, "", 0, (/* @__PURE__ */ new Date()).toISOString());
+      ).run(sourceId, ext.slice(1) || "audio", title, "", mediaPath, "", 0, (/* @__PURE__ */ new Date()).toISOString());
       db2.prepare(
         "INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)"
       ).run(sessionId, sourceId, title, (/* @__PURE__ */ new Date()).toISOString(), segments.length);

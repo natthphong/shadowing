@@ -140,7 +140,7 @@ Shapes are modern and approachable. A consistent **0.5rem (8px)** radius is the 
 - **Status Indicators:** Fully circular (Pill) for AI status lights and progress badges.
 - **Active State Highlights:** The selection bar in the sidebar should have a 6px radius and 4px of horizontal inset from the sidebar edge.
 
-## Practice Screen Layout (v0.0.5)
+## Practice Screen Layout (v0.0.7)
 
 The Practice page uses a **bounded flex column** layout so all controls remain visible
 regardless of sentence length or window size:
@@ -152,10 +152,18 @@ regardless of sentence length or window size:
 - Inside the card: **fixed top** (controls + counter), **flex-1 sentence area**,
   **fixed bottom** (subtitle, translation popup, feedback chip, transport controls,
   progress bar) — all three areas use `shrink-0` except the middle.
+- **50/50 vertical split** when a video source is loaded: the video player and the
+  practice card each get `flex-1 min-h-0` so they share the left column height equally.
+  Without video, the practice card takes the full left column height.
 - **Dynamic font sizing** (`useAutoFitText` hook — `src/renderer/src/hooks/`):
-  a ResizeObserver binary-searches the largest `font-size` (18 – 52 px) that keeps
-  `scrollHeight ≤ clientHeight` AND `scrollWidth ≤ clientWidth` on the sentence box.
+  a ResizeObserver binary-searches the largest `font-size` (18 – 52 px).
+  The hook targets the **outer centering div** (`sentenceBoxRef`) but measures
+  `inner.scrollHeight` (the flex-wrap word container, `firstElementChild`) against
+  `outer.clientHeight` — this avoids a Chromium quirk where `align-content: center`
+  makes `scrollHeight === clientHeight` regardless of actual content size, which
+  previously caused the font to always stay at `maxPx`.
   Gaps between words are `em`-relative so they scale proportionally.
+  Initial run uses double-rAF to ensure flex layout is settled before measuring.
   Re-runs on every segment change and on window resize.
 
 ## Components

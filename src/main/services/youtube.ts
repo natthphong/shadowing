@@ -36,6 +36,52 @@ export async function fetchYtMetadata(url: string): Promise<YtMetadata> {
   })
 }
 
+export async function downloadYtVideo(
+  url: string,
+  outputDir: string,
+  onProgress?: (msg: string) => void
+): Promise<string> {
+  // Download best video ≤480p (reasonable file size) merged into mp4
+  const outTemplate = path.join(outputDir, 'yt_vid_%(id)s.%(ext)s')
+
+  return new Promise((resolve, reject) => {
+    onProgress?.('Downloading video from YouTube...')
+    log.info('[yt-dlp video] Starting download:', url)
+
+    const proc = spawn(YTDLP_PATH, [
+      '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
+      '--ffmpeg-location', FFMPEG_PATH,
+      '--extractor-args', 'youtube:player_client=android,ios',
+      '--no-playlist',
+      '--no-mtime',
+      '-o', outTemplate,
+      '--print', 'after_move:filepath',
+      url
+    ], { env: CHILD_ENV })
+
+    let lastLine = ''
+    let err = ''
+
+    proc.stdout.on('data', (d: Buffer) => {
+      const line = d.toString().trim()
+      if (line) { lastLine = line; log.info('[yt-dlp video] stdout:', line) }
+    })
+    proc.stderr.on('data', (d: Buffer) => {
+      const msg = d.toString()
+      err += msg
+      const pct = msg.match(/(\d+\.?\d*)%/)
+      if (pct) onProgress?.(`Downloading video: ${parseFloat(pct[1]).toFixed(0)}%`)
+    })
+    proc.on('close', (code) => {
+      if (code === 0 && lastLine) resolve(lastLine.trim())
+      else if (code === 0) reject(new Error('yt-dlp video: no output path received'))
+      else reject(new Error(`yt-dlp video failed (code ${code}): ${err.slice(-400)}`))
+    })
+    proc.on('error', (e) => reject(new Error(`Cannot run yt-dlp: ${e.message}`)))
+  })
+}
+
 export async function downloadYtAudio(
   url: string,
   outputDir: string,
