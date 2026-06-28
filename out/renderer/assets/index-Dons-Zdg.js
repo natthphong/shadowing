@@ -9182,39 +9182,94 @@ const useAppStore = create((set, get) => ({
     playbackSpeed: 1
   })
 }));
+const MIN_MEASURABLE_SIZE = 4;
+const ROUNDING_TOLERANCE = 0.5;
+const HEIGHT_SAFETY_GAP = 2;
+function pixelValue(value) {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+function availableContentSize(el2) {
+  const style = window.getComputedStyle(el2);
+  return {
+    width: el2.clientWidth - pixelValue(style.paddingLeft) - pixelValue(style.paddingRight),
+    height: el2.clientHeight - pixelValue(style.paddingTop) - pixelValue(style.paddingBottom)
+  };
+}
+function contentFits(el2, inner) {
+  const available = availableContentSize(el2);
+  const widthLimit = inner.clientWidth > 0 ? Math.min(inner.clientWidth, available.width) : available.width;
+  const fitsWidth = inner.scrollWidth <= widthLimit + ROUNDING_TOLERANCE;
+  const fitsHeight = inner.scrollHeight <= available.height - HEIGHT_SAFETY_GAP;
+  return fitsWidth && fitsHeight;
+}
 function fitText(el2, minPx, maxPx) {
   const inner = el2.firstElementChild;
   if (!inner) return;
-  const availH = el2.clientHeight;
-  const availW = el2.clientWidth;
-  if (availH < 4 || availW < 4) return;
-  const margin = 4;
-  el2.style.fontSize = `${minPx}px`;
-  if (inner.scrollHeight > availH - margin || inner.scrollWidth > availW - margin) return;
-  el2.style.fontSize = `${maxPx}px`;
-  if (inner.scrollHeight <= availH - margin && inner.scrollWidth <= availW - margin) return;
-  let lo = minPx, hi2 = maxPx;
-  while (hi2 - lo > 0.5) {
-    const mid = (lo + hi2) / 2;
-    el2.style.fontSize = `${mid}px`;
-    if (inner.scrollHeight > availH - margin || inner.scrollWidth > availW - margin) hi2 = mid;
-    else lo = mid;
+  const available = availableContentSize(el2);
+  if (available.width < MIN_MEASURABLE_SIZE || available.height < MIN_MEASURABLE_SIZE) {
+    return;
   }
-  el2.style.fontSize = `${Math.floor(lo * 2) / 2}px`;
+  const minimum = Math.min(minPx, maxPx);
+  const maximum = Math.max(minPx, maxPx);
+  el2.style.fontSize = `${minimum}px`;
+  if (!contentFits(el2, inner)) return;
+  el2.style.fontSize = `${maximum}px`;
+  if (contentFits(el2, inner)) return;
+  let low = minimum;
+  let high = maximum;
+  while (high - low > ROUNDING_TOLERANCE) {
+    const candidate = (low + high) / 2;
+    el2.style.fontSize = `${candidate}px`;
+    if (contentFits(el2, inner)) low = candidate;
+    else high = candidate;
+  }
+  el2.style.fontSize = `${Math.floor(low * 2) / 2}px`;
 }
-function useAutoFitText(ref, text, { minPx = 18, maxPx = 52 } = {}) {
+function useAutoFitText(ref, text, {
+  minPx = 18,
+  maxPx = 52,
+  contentKey = ""
+} = {}) {
   reactExports.useLayoutEffect(() => {
     const el2 = ref.current;
     if (!el2) return;
+    el2.style.fontSize = `${Math.min(minPx, maxPx)}px`;
     fitText(el2, minPx, maxPx);
-  }, [text, minPx, maxPx, ref]);
+    let settledFrame = null;
+    const layoutFrame = window.requestAnimationFrame(() => {
+      settledFrame = window.requestAnimationFrame(() => fitText(el2, minPx, maxPx));
+    });
+    return () => {
+      window.cancelAnimationFrame(layoutFrame);
+      if (settledFrame !== null) window.cancelAnimationFrame(settledFrame);
+    };
+  }, [contentKey, maxPx, minPx, ref, text]);
   reactExports.useEffect(() => {
     const el2 = ref.current;
     if (!el2) return;
-    fitText(el2, minPx, maxPx);
-    const ro = new ResizeObserver(() => fitText(el2, minPx, maxPx));
-    ro.observe(el2);
-    return () => ro.disconnect();
+    let frame = null;
+    let active = true;
+    const scheduleFit = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        if (active) fitText(el2, minPx, maxPx);
+      });
+    };
+    const observer = new ResizeObserver(scheduleFit);
+    observer.observe(el2);
+    window.addEventListener("resize", scheduleFit);
+    scheduleFit();
+    void document.fonts?.ready.then(() => {
+      if (active) scheduleFit();
+    });
+    return () => {
+      active = false;
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleFit);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
   }, [minPx, maxPx, ref]);
 }
 const VIDEO_TYPES = /* @__PURE__ */ new Set(["mp4", "mov", "mkv", "avi", "webm"]);
@@ -9256,20 +9311,50 @@ function Practice() {
   const chunksRef = reactExports.useRef([]);
   const recordingStartRef = reactExports.useRef(0);
   const transcriptRef = reactExports.useRef(null);
+  const loopReplayTimerRef = reactExports.useRef(null);
   const sentenceBoxRef = reactExports.useRef(null);
   const isInitialMount = reactExports.useRef(true);
   const autoPlayRef = reactExports.useRef(autoPlay);
   reactExports.useEffect(() => {
     autoPlayRef.current = autoPlay;
   }, [autoPlay]);
+  const loopingRef = reactExports.useRef(looping);
+  reactExports.useEffect(() => {
+    loopingRef.current = looping;
+  }, [looping]);
+  const playbackSpeedRef = reactExports.useRef(playbackSpeed);
+  reactExports.useEffect(() => {
+    playbackSpeedRef.current = playbackSpeed;
+  }, [playbackSpeed]);
+  const segmentsRef = reactExports.useRef(segments);
+  reactExports.useEffect(() => {
+    segmentsRef.current = segments;
+  }, [segments]);
+  const playSegmentRef = reactExports.useRef(null);
   const currentSegment = segments[currentIdx];
-  useAutoFitText(sentenceBoxRef, currentSegment?.original ?? "", { minPx: 18, maxPx: 52 });
+  const sentenceFitKey = [
+    currentIdx,
+    showTranslation,
+    showTranscript,
+    showIPA,
+    Boolean(selectedText),
+    Boolean(lastScores),
+    isRecording,
+    transcribing
+  ].join(":");
+  useAutoFitText(sentenceBoxRef, currentSegment?.original ?? "", {
+    minPx: 18,
+    maxPx: 52,
+    contentKey: sentenceFitKey
+  });
   const sourceType = session?.source_type || "";
   const isYouTube = sourceType === "youtube";
   const isVideoFile = VIDEO_TYPES.has(sourceType);
   const localMedia = session?.local_media_path || "";
   const isPlayableVideo = isVideoFile || isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia);
   const showVideoPlayer = isYouTube || isVideoFile;
+  const canPlayMedia = Boolean(currentSegment && localMedia);
+  const canSpeakAI = Boolean(currentSegment?.original);
   const getMediaEl = reactExports.useCallback(
     () => isPlayableVideo ? videoRef.current : audioRef.current,
     [isPlayableVideo]
@@ -9346,12 +9431,14 @@ function Practice() {
     if (!s || !mediaPath) return;
     const el2 = getMediaEl();
     if (!el2) return;
+    if (loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current);
+      loopReplayTimerRef.current = null;
+    }
     const newSrc = `file://${mediaPath}`;
     const doPlay = () => {
-      el2.playbackRate = playbackSpeed;
+      el2.playbackRate = playbackSpeedRef.current;
       el2.currentTime = s.start_time;
-      el2.play().catch(() => {
-      });
       el2.ontimeupdate = () => {
         const segDur = s.end_time - s.start_time;
         if (segDur > 0) {
@@ -9362,11 +9449,23 @@ function Practice() {
           el2.ontimeupdate = null;
           setIsMediaPlaying(false);
           setMediaProgress(100);
-          if (looping) setTimeout(() => playSegment(s), 500);
+          if (loopingRef.current) {
+            loopReplayTimerRef.current = setTimeout(() => {
+              loopReplayTimerRef.current = null;
+              if (loopingRef.current) playSegmentRef.current?.(s);
+            }, 500);
+          } else if (autoPlayRef.current) {
+            setCurrentIdx(
+              (prev) => prev < segmentsRef.current.length - 1 ? prev + 1 : prev
+            );
+          }
         }
       };
+      void el2.play().then(() => setIsMediaPlaying(true)).catch(() => {
+        el2.ontimeupdate = null;
+        setIsMediaPlaying(false);
+      });
     };
-    setIsMediaPlaying(true);
     setMediaProgress(0);
     if (mediaSrcRef.current === newSrc && el2.readyState >= 1) {
       doPlay();
@@ -9376,13 +9475,58 @@ function Practice() {
       el2.addEventListener("loadedmetadata", doPlay, { once: true });
       el2.load();
     }
-  }, [currentSegment, session, playbackSpeed, looping, getMediaEl]);
+  }, [currentSegment, session, getMediaEl]);
+  reactExports.useEffect(() => {
+    playSegmentRef.current = playSegment;
+  }, [playSegment]);
   const pauseMedia = reactExports.useCallback(() => {
     const el2 = getMediaEl();
     if (!el2) return;
     el2.pause();
+    el2.ontimeupdate = null;
     setIsMediaPlaying(false);
   }, [getMediaEl]);
+  const handlePlayPause = reactExports.useCallback(() => {
+    if (!canPlayMedia) return;
+    if (isMediaPlaying) pauseMedia();
+    else playSegment();
+  }, [canPlayMedia, isMediaPlaying, pauseMedia, playSegment]);
+  const handlePlaybackRateChange = reactExports.useCallback((rate) => {
+    playbackSpeedRef.current = rate;
+    setPlaybackSpeed(rate);
+    const el2 = getMediaEl();
+    if (el2) el2.playbackRate = rate;
+  }, [getMediaEl]);
+  const handleToggleLoop = reactExports.useCallback(() => {
+    const next = !loopingRef.current;
+    loopingRef.current = next;
+    setLooping(next);
+    if (!next && loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current);
+      loopReplayTimerRef.current = null;
+    }
+  }, []);
+  const handleToggleAuto = reactExports.useCallback(() => {
+    const next = !autoPlayRef.current;
+    autoPlayRef.current = next;
+    setAutoPlay(next);
+  }, []);
+  const goToSegment = reactExports.useCallback((index) => {
+    const nextIndex = Math.max(0, Math.min(segmentsRef.current.length - 1, index));
+    if (nextIndex === currentIdx) return;
+    if (loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current);
+      loopReplayTimerRef.current = null;
+    }
+    pauseMedia();
+    setMediaProgress(0);
+    setCurrentIdx(nextIndex);
+  }, [currentIdx, pauseMedia]);
+  const goToPrevious = reactExports.useCallback(() => goToSegment(currentIdx - 1), [currentIdx, goToSegment]);
+  const goToNext = reactExports.useCallback(() => goToSegment(currentIdx + 1), [currentIdx, goToSegment]);
+  reactExports.useEffect(() => () => {
+    if (loopReplayTimerRef.current) clearTimeout(loopReplayTimerRef.current);
+  }, []);
   const startRecording = reactExports.useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -9451,6 +9595,11 @@ function Practice() {
       setTranscribing(false);
     }
   }, [currentSegment, loadAttempts]);
+  const handleRecord = reactExports.useCallback(() => {
+    if (transcribing) return;
+    if (isRecording) void stopRecording();
+    else void startRecording();
+  }, [isRecording, startRecording, stopRecording, transcribing]);
   const handleTextSelect = reactExports.useCallback(async () => {
     const text = window.getSelection()?.toString().trim();
     if (!text || text.length < 2) return;
@@ -9510,7 +9659,9 @@ function Practice() {
     if (!sessionId) return;
     setAnalyzing(true);
     try {
-      setAnalysisResult(await window.api.practice.analyzeSession(sessionId));
+      setAnalysisResult(
+        await window.api.practice.analyzeSession(sessionId)
+      );
       setShowAnalysis(true);
     } catch (e) {
       alert("Analysis failed: " + String(e));
@@ -9615,7 +9766,7 @@ function Practice() {
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 min-h-0 overflow-hidden", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-[3] min-w-0 flex flex-col overflow-hidden p-gutter gap-4 pb-20", children: [
-        showVideoPlayer && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md", children: [
+        showVideoPlayer && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-[0.8] min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md", children: [
           isPlayableVideo ? (
             /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
             /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -9636,14 +9787,16 @@ function Practice() {
           /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
-              onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
-              className: "absolute inset-0 flex items-center justify-center group",
+              onClick: handlePlayPause,
+              disabled: !canPlayMedia,
+              title: canPlayMedia ? "Play or pause current sentence" : "No media available for this session",
+              className: "absolute inset-0 flex items-center justify-center group disabled:cursor-not-allowed disabled:opacity-50",
               children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-white text-4xl", style: { fontVariationSettings: "'FILL' 1" }, children: isMediaPlaying ? "pause" : "play_arrow" }) })
             }
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 w-full bg-white/30 rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 h-full bg-primary rounded-full transition-all", style: { width: `${mediaProgress}%` } }) }) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "flex-1 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "flex-[1.2] min-w-0 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 flex flex-col items-center gap-2 pt-4 px-6", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-2 flex-wrap justify-center", children: [
               /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 px-3 py-1 bg-surface-container rounded-full text-secondary", children: [
@@ -9652,7 +9805,8 @@ function Practice() {
                   "select",
                   {
                     value: playbackSpeed,
-                    onChange: (e) => setPlaybackSpeed(Number(e.target.value)),
+                    onChange: (e) => handlePlaybackRateChange(Number(e.target.value)),
+                    "aria-label": "Playback speed",
                     className: "bg-transparent text-label-sm font-semibold outline-none cursor-pointer",
                     children: [0.5, 0.75, 1, 1.25, 1.5].map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: s, children: [
                       s,
@@ -9664,7 +9818,9 @@ function Practice() {
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
-                  onClick: () => setLooping((v2) => !v2),
+                  onClick: handleToggleLoop,
+                  "aria-pressed": looping,
+                  title: looping ? "Disable sentence loop" : "Loop current sentence",
                   className: `flex items-center gap-1.5 px-3 py-1 rounded-full transition-colors ${looping ? "bg-primary text-on-primary" : "bg-surface-container text-secondary"}`,
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: "repeat" }),
@@ -9675,7 +9831,9 @@ function Practice() {
               /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
-                  onClick: () => setAutoPlay((v2) => !v2),
+                  onClick: handleToggleAuto,
+                  "aria-pressed": autoPlay,
+                  title: autoPlay ? "Disable automatic advance" : "Automatically play the next sentence",
                   className: `flex items-center gap-1.5 px-3 py-1 rounded-full transition-colors ${autoPlay ? "bg-secondary text-on-secondary" : "bg-surface-container text-secondary"}`,
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: "play_circle" }),
@@ -9694,14 +9852,16 @@ function Practice() {
             "div",
             {
               ref: sentenceBoxRef,
-              className: "flex-1 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1",
+              "data-testid": "current-sentence-box",
+              className: "flex-1 min-w-0 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1",
               children: /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "div",
                 {
-                  className: "flex flex-wrap justify-center gap-x-[0.35em] gap-y-[0.35em] cursor-text",
+                  "data-testid": "current-sentence-text",
+                  className: "w-full max-w-full max-h-full min-w-0 text-center cursor-text whitespace-normal [overflow-wrap:anywhere] break-words leading-[1.15]",
                   onMouseUp: handleTextSelect,
-                  children: words.map((word, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center", children: [
-                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight", children: word }),
+                  children: words.map((word, i) => /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "inline-flex max-w-full flex-col items-center align-top mx-[0.175em] my-[0.175em] whitespace-normal [overflow-wrap:anywhere] break-words", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "max-w-full font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-colors select-text whitespace-normal [overflow-wrap:anywhere] break-words leading-[1.15]", children: word }),
                     showIPA && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "font-ipa-label text-[0.5em] text-secondary mt-[0.2em] tracking-wider", children: [
                       "/",
                       word.toLowerCase().replace(/[^a-z]/g, ""),
@@ -9779,8 +9939,10 @@ function Practice() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
-                  onClick: () => setCurrentIdx((i) => Math.max(0, i - 1)),
+                  onClick: goToPrevious,
                   disabled: currentIdx === 0,
+                  title: "Previous sentence",
+                  "aria-label": "Previous sentence",
                   className: "w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
                   children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", children: "skip_previous" })
                 }
@@ -9788,9 +9950,11 @@ function Practice() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
-                  onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
-                  className: `w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${isMediaPlaying ? "border-primary bg-primary-fixed text-primary" : "border-outline-variant text-secondary hover:bg-surface-container"}`,
-                  title: "Play / Pause segment",
+                  onClick: handlePlayPause,
+                  disabled: !canPlayMedia,
+                  className: `w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${isMediaPlaying ? "border-primary bg-primary-fixed text-primary" : "border-outline-variant text-secondary hover:bg-surface-container"} disabled:opacity-30 disabled:cursor-not-allowed`,
+                  title: canPlayMedia ? "Play / Pause segment" : "No media available for this session",
+                  "aria-label": isMediaPlaying ? "Pause current sentence" : "Play current sentence",
                   children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }, children: isMediaPlaying ? "pause" : "play_arrow" })
                 }
               ),
@@ -9798,8 +9962,8 @@ function Practice() {
                 "button",
                 {
                   onClick: () => playTts(),
-                  disabled: ttsPlaying,
-                  title: "AI Voice",
+                  disabled: !canSpeakAI || ttsPlaying,
+                  title: canSpeakAI ? "AI Voice" : "AI Voice unavailable",
                   className: `w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${ttsPlaying ? "border-tertiary bg-tertiary-container animate-pulse text-tertiary" : "border-outline-variant text-secondary hover:bg-surface-container"} disabled:opacity-60`,
                   children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: "'FILL' 1" }, children: ttsPlaying ? "volume_up" : "record_voice_over" })
                 }
@@ -9807,7 +9971,7 @@ function Practice() {
               isRecording ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
-                  onClick: stopRecording,
+                  onClick: handleRecord,
                   className: "px-5 py-2 bg-error text-on-error rounded-full flex items-center gap-1.5 shadow-md recording-active text-sm font-bold",
                   children: [
                     /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", style: { fontVariationSettings: "'FILL' 1" }, children: "stop" }),
@@ -9817,7 +9981,7 @@ function Practice() {
               ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
                 "button",
                 {
-                  onClick: startRecording,
+                  onClick: handleRecord,
                   disabled: transcribing,
                   className: "px-5 py-2 bg-primary text-on-primary rounded-full flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50 text-sm font-bold",
                   children: [
@@ -9829,8 +9993,10 @@ function Practice() {
               /* @__PURE__ */ jsxRuntimeExports.jsx(
                 "button",
                 {
-                  onClick: () => setCurrentIdx((i) => Math.min(segments.length - 1, i + 1)),
+                  onClick: goToNext,
                   disabled: currentIdx === segments.length - 1,
+                  title: "Next sentence",
+                  "aria-label": "Next sentence",
                   className: "w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
                   children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", children: "skip_next" })
                 }
@@ -9868,7 +10034,7 @@ function Practice() {
             "div",
             {
               "data-active": String(isActive),
-              onClick: () => !isFuture && setCurrentIdx(idx),
+              onClick: () => !isFuture && goToSegment(idx),
               className: `p-4 rounded-xl flex flex-col gap-2 transition-all ${isActive ? "border-l-4 border-primary bg-secondary-container shadow-sm" : isFuture ? "border border-outline-variant bg-white opacity-50 grayscale cursor-not-allowed" : "border border-outline-variant bg-white hover:border-primary/40 cursor-pointer"}`,
               children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between items-start", children: [
@@ -9902,12 +10068,13 @@ function Practice() {
         ] })
       ] })
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "fixed bottom-6 left-1/2 -translate-x-1/2 w-auto rounded-full px-3 py-1.5 bg-surface-container border border-outline-variant shadow-lg flex items-center gap-1 z-50", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("nav", { className: "fixed bottom-6 left-1/2 -translate-x-1/2 w-auto max-w-[calc(100vw-2rem)] rounded-full px-3 py-1.5 bg-surface-container border border-outline-variant shadow-lg flex items-center gap-1 z-50 overflow-x-auto no-scrollbar", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsx(
         "select",
         {
           value: playbackSpeed,
-          onChange: (e) => setPlaybackSpeed(Number(e.target.value)),
+          onChange: (e) => handlePlaybackRateChange(Number(e.target.value)),
+          "aria-label": "Playback speed",
           className: "px-4 py-2 text-secondary bg-transparent rounded-full text-label-sm font-semibold outline-none cursor-pointer hover:bg-surface-container-high",
           children: [0.5, 0.75, 1, 1.25, 1.5].map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs("option", { value: s, children: [
             s,
@@ -9915,22 +10082,47 @@ function Practice() {
           ] }, s))
         }
       ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: goToPrevious,
+          disabled: currentIdx === 0,
+          title: "Previous sentence",
+          "aria-label": "Previous sentence",
+          className: "w-9 h-9 shrink-0 rounded-full text-secondary hover:bg-surface-container-high transition-colors disabled:opacity-30",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "skip_previous" })
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          onClick: () => isMediaPlaying ? pauseMedia() : playSegment(),
-          className: `flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${isMediaPlaying ? "text-primary" : "text-secondary hover:bg-surface-container-high"}`,
+          onClick: handlePlayPause,
+          disabled: !canPlayMedia,
+          title: canPlayMedia ? "Play or pause current sentence" : "No media available for this session",
+          className: `flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${isMediaPlaying ? "text-primary" : "text-secondary hover:bg-surface-container-high"} disabled:opacity-30 disabled:cursor-not-allowed`,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: isMediaPlaying ? "pause" : "play_arrow" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm", children: isMediaPlaying ? "Pause" : "Play" })
           ]
         }
       ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: goToNext,
+          disabled: currentIdx === segments.length - 1,
+          title: "Next sentence",
+          "aria-label": "Next sentence",
+          className: "w-9 h-9 shrink-0 rounded-full text-secondary hover:bg-surface-container-high transition-colors disabled:opacity-30",
+          children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "skip_next" })
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          onClick: () => setLooping((v2) => !v2),
-          className: `flex items-center gap-2 px-4 py-2 rounded-full transition-all ${looping ? "bg-primary text-on-primary shadow-md" : "text-secondary hover:bg-surface-container-high"}`,
+          onClick: handleToggleLoop,
+          "aria-pressed": looping,
+          className: `flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-all ${looping ? "bg-primary text-on-primary shadow-md" : "text-secondary hover:bg-surface-container-high"}`,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: "repeat" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm", children: "Loop" })
@@ -9940,8 +10132,9 @@ function Practice() {
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          onClick: () => setAutoPlay((v2) => !v2),
-          className: `flex items-center gap-2 px-4 py-2 rounded-full transition-all ${autoPlay ? "bg-secondary text-on-secondary shadow-md" : "text-secondary hover:bg-surface-container-high"}`,
+          onClick: handleToggleAuto,
+          "aria-pressed": autoPlay,
+          className: `flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-all ${autoPlay ? "bg-secondary text-on-secondary shadow-md" : "text-secondary hover:bg-surface-container-high"}`,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: "play_circle" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm", children: "Auto" })
@@ -9952,8 +10145,8 @@ function Practice() {
         "button",
         {
           onClick: () => playTts(),
-          disabled: ttsPlaying,
-          className: `flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${ttsPlaying ? "text-tertiary animate-pulse" : "text-secondary hover:bg-surface-container-high"} disabled:opacity-50`,
+          disabled: !canSpeakAI || ttsPlaying,
+          className: `flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${ttsPlaying ? "text-tertiary animate-pulse" : "text-secondary hover:bg-surface-container-high"} disabled:opacity-50`,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: "record_voice_over" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm", children: "AI Voice" })
@@ -9963,9 +10156,9 @@ function Practice() {
       /* @__PURE__ */ jsxRuntimeExports.jsxs(
         "button",
         {
-          onClick: isRecording ? stopRecording : startRecording,
+          onClick: handleRecord,
           disabled: transcribing,
-          className: `flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${isRecording ? "text-error hover:bg-error-container/20" : "text-secondary hover:bg-surface-container-high"} disabled:opacity-50`,
+          className: `flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${isRecording ? "text-error hover:bg-error-container/20" : "text-secondary hover:bg-surface-container-high"} disabled:opacity-50`,
           children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: isRecording ? "stop" : "mic" }),
             /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm", children: isRecording ? "Stop" : "Record" })
@@ -10454,7 +10647,7 @@ function Settings() {
     ] }) })
   ] });
 }
-const APP_VERSION = "0.0.8";
+const APP_VERSION = "0.0.11";
 function App() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(HashRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden bg-surface text-on-surface relative", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),

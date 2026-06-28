@@ -68,6 +68,7 @@ export default function Practice(): JSX.Element {
   const chunksRef = useRef<Blob[]>([])
   const recordingStartRef = useRef<number>(0)
   const transcriptRef = useRef<HTMLDivElement>(null)
+  const loopReplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Auto-fit text: ref for the sentence container
   const sentenceBoxRef = useRef<HTMLDivElement>(null)
@@ -77,10 +78,39 @@ export default function Practice(): JSX.Element {
   const autoPlayRef = useRef(autoPlay)
   useEffect(() => { autoPlayRef.current = autoPlay }, [autoPlay])
 
+  // Refs to avoid stale closures inside ontimeupdate callbacks
+  const loopingRef = useRef(looping)
+  useEffect(() => { loopingRef.current = looping }, [looping])
+
+  const playbackSpeedRef = useRef(playbackSpeed)
+  useEffect(() => { playbackSpeedRef.current = playbackSpeed }, [playbackSpeed])
+
+  const segmentsRef = useRef(segments)
+  useEffect(() => { segmentsRef.current = segments }, [segments])
+
+  // Stable ref to playSegment — avoids stale-closure in recursive setTimeout calls (loop).
+  // useCallback deps may or may not have changed by the time the 500ms timer fires.
+  // Reading .current always gives the latest version regardless.
+  const playSegmentRef = useRef<((seg?: Segment) => void) | null>(null)
+
   const currentSegment = segments[currentIdx]
 
-  // Apply auto-fit font to the sentence box whenever text changes
-  useAutoFitText(sentenceBoxRef, currentSegment?.original ?? '', { minPx: 18, maxPx: 52 })
+  // Refit when either the content or any sibling panel changes the available box.
+  const sentenceFitKey = [
+    currentIdx,
+    showTranslation,
+    showTranscript,
+    showIPA,
+    Boolean(selectedText),
+    Boolean(lastScores),
+    isRecording,
+    transcribing
+  ].join(':')
+  useAutoFitText(sentenceBoxRef, currentSegment?.original ?? '', {
+    minPx: 18,
+    maxPx: 52,
+    contentKey: sentenceFitKey
+  })
 
   // Derived media type
   const sourceType = session?.source_type || ''
@@ -91,6 +121,8 @@ export default function Practice(): JSX.Element {
   const localMedia = session?.local_media_path || ''
   const isPlayableVideo = isVideoFile || (isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia))
   const showVideoPlayer = isYouTube || isVideoFile
+  const canPlayMedia = Boolean(currentSegment && localMedia)
+  const canSpeakAI = Boolean(currentSegment?.original)
 
   const getMediaEl = useCallback(
     (): HTMLAudioElement | HTMLVideoElement | null =>
@@ -176,13 +208,19 @@ export default function Practice(): JSX.Element {
     const el = getMediaEl()
     if (!el) return
 
+    if (loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current)
+      loopReplayTimerRef.current = null
+    }
+
     const newSrc = `file://${mediaPath}`
 
     // Seek to segment start then play; wire up the stop-at-end handler.
+    // All toggleable state (looping, playbackSpeed, autoPlay) is read via refs so
+    // toggling while a segment is playing takes effect immediately (no stale closures).
     const doPlay = (): void => {
-      el.playbackRate = playbackSpeed
+      el.playbackRate = playbackSpeedRef.current
       el.currentTime = s.start_time
-      el.play().catch(() => {})
       el.ontimeupdate = () => {
         const segDur = s.end_time - s.start_time
         if (segDur > 0) {
@@ -193,12 +231,28 @@ export default function Practice(): JSX.Element {
           el.ontimeupdate = null
           setIsMediaPlaying(false)
           setMediaProgress(100)
-          if (looping) setTimeout(() => playSegment(s), 500)
+          if (loopingRef.current) {
+            loopReplayTimerRef.current = setTimeout(() => {
+              loopReplayTimerRef.current = null
+              if (loopingRef.current) playSegmentRef.current?.(s)
+            }, 500)
+          } else if (autoPlayRef.current) {
+            // Auto-advance: increment index → the currentIdx useEffect triggers next play
+            setCurrentIdx((prev) =>
+              prev < segmentsRef.current.length - 1 ? prev + 1 : prev
+            )
+          }
         }
       }
+
+      void el.play()
+        .then(() => setIsMediaPlaying(true))
+        .catch(() => {
+          el.ontimeupdate = null
+          setIsMediaPlaying(false)
+        })
     }
 
-    setIsMediaPlaying(true)
     setMediaProgress(0)
 
     if (mediaSrcRef.current === newSrc && el.readyState >= 1) {
@@ -211,14 +265,67 @@ export default function Practice(): JSX.Element {
       el.addEventListener('loadedmetadata', doPlay, { once: true })
       el.load()
     }
-  }, [currentSegment, session, playbackSpeed, looping, getMediaEl])
+  }, [currentSegment, session, getMediaEl])
+
+  useEffect(() => {
+    playSegmentRef.current = playSegment
+  }, [playSegment])
 
   const pauseMedia = useCallback(() => {
     const el = getMediaEl()
     if (!el) return
     el.pause()
+    el.ontimeupdate = null
     setIsMediaPlaying(false)
   }, [getMediaEl])
+
+  const handlePlayPause = useCallback(() => {
+    if (!canPlayMedia) return
+    if (isMediaPlaying) pauseMedia()
+    else playSegment()
+  }, [canPlayMedia, isMediaPlaying, pauseMedia, playSegment])
+
+  const handlePlaybackRateChange = useCallback((rate: number) => {
+    playbackSpeedRef.current = rate
+    setPlaybackSpeed(rate)
+    const el = getMediaEl()
+    if (el) el.playbackRate = rate
+  }, [getMediaEl])
+
+  const handleToggleLoop = useCallback(() => {
+    const next = !loopingRef.current
+    loopingRef.current = next
+    setLooping(next)
+    if (!next && loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current)
+      loopReplayTimerRef.current = null
+    }
+  }, [])
+
+  const handleToggleAuto = useCallback(() => {
+    const next = !autoPlayRef.current
+    autoPlayRef.current = next
+    setAutoPlay(next)
+  }, [])
+
+  const goToSegment = useCallback((index: number) => {
+    const nextIndex = Math.max(0, Math.min(segmentsRef.current.length - 1, index))
+    if (nextIndex === currentIdx) return
+    if (loopReplayTimerRef.current) {
+      clearTimeout(loopReplayTimerRef.current)
+      loopReplayTimerRef.current = null
+    }
+    pauseMedia()
+    setMediaProgress(0)
+    setCurrentIdx(nextIndex)
+  }, [currentIdx, pauseMedia])
+
+  const goToPrevious = useCallback(() => goToSegment(currentIdx - 1), [currentIdx, goToSegment])
+  const goToNext = useCallback(() => goToSegment(currentIdx + 1), [currentIdx, goToSegment])
+
+  useEffect(() => () => {
+    if (loopReplayTimerRef.current) clearTimeout(loopReplayTimerRef.current)
+  }, [])
 
   // ── Recording ─────────────────────────────────────────────────────────────
   const startRecording = useCallback(async () => {
@@ -284,6 +391,12 @@ export default function Practice(): JSX.Element {
       setTranscribing(false)
     }
   }, [currentSegment, loadAttempts])
+
+  const handleRecord = useCallback(() => {
+    if (transcribing) return
+    if (isRecording) void stopRecording()
+    else void startRecording()
+  }, [isRecording, startRecording, stopRecording, transcribing])
 
   // ── Translation ───────────────────────────────────────────────────────────
   const handleTextSelect = useCallback(async () => {
@@ -352,7 +465,9 @@ export default function Practice(): JSX.Element {
     if (!sessionId) return
     setAnalyzing(true)
     try {
-      setAnalysisResult(await window.api.practice.analyzeSession(sessionId))
+      setAnalysisResult(
+        await window.api.practice.analyzeSession(sessionId) as Record<string, unknown>
+      )
       setShowAnalysis(true)
     } catch (e) {
       alert('Analysis failed: ' + String(e))
@@ -488,7 +603,7 @@ export default function Practice(): JSX.Element {
 
           {/* ── Video player card (YouTube / video file only) ── */}
           {showVideoPlayer && (
-            <div className="flex-1 min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md">
+            <div className="flex-[0.8] min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md">
               {isPlayableVideo ? (
                 /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
                 <video
@@ -508,8 +623,10 @@ export default function Practice(): JSX.Element {
                 <p className="text-white font-semibold text-sm truncate">{session.title}</p>
               </div>
               <button
-                onClick={() => isMediaPlaying ? pauseMedia() : playSegment()}
-                className="absolute inset-0 flex items-center justify-center group"
+                onClick={handlePlayPause}
+                disabled={!canPlayMedia}
+                title={canPlayMedia ? 'Play or pause current sentence' : 'No media available for this session'}
+                className="absolute inset-0 flex items-center justify-center group disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform">
                   <span className="material-symbols-outlined text-white text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>
@@ -529,7 +646,7 @@ export default function Practice(): JSX.Element {
               flex-1 min-h-0: fills remaining height after video player.
               overflow-hidden: children cannot push beyond its bounds.
           ── */}
-          <section className="flex-1 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden">
+          <section className="flex-[1.2] min-w-0 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden">
 
             {/* Fixed top: controls + sentence counter */}
             <div className="shrink-0 flex flex-col items-center gap-2 pt-4 px-6">
@@ -538,7 +655,8 @@ export default function Practice(): JSX.Element {
                   <span className="material-symbols-outlined text-sm">speed</span>
                   <select
                     value={playbackSpeed}
-                    onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+                    onChange={(e) => handlePlaybackRateChange(Number(e.target.value))}
+                    aria-label="Playback speed"
                     className="bg-transparent text-label-sm font-semibold outline-none cursor-pointer"
                   >
                     {[0.5, 0.75, 1.0, 1.25, 1.5].map((s) => (
@@ -547,14 +665,18 @@ export default function Practice(): JSX.Element {
                   </select>
                 </div>
                 <button
-                  onClick={() => setLooping((v) => !v)}
+                  onClick={handleToggleLoop}
+                  aria-pressed={looping}
+                  title={looping ? 'Disable sentence loop' : 'Loop current sentence'}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-colors ${looping ? 'bg-primary text-on-primary' : 'bg-surface-container text-secondary'}`}
                 >
                   <span className="material-symbols-outlined text-sm">repeat</span>
                   <span className="text-label-sm">Loop</span>
                 </button>
                 <button
-                  onClick={() => setAutoPlay((v) => !v)}
+                  onClick={handleToggleAuto}
+                  aria-pressed={autoPlay}
+                  title={autoPlay ? 'Disable automatic advance' : 'Automatically play the next sentence'}
                   className={`flex items-center gap-1.5 px-3 py-1 rounded-full transition-colors ${autoPlay ? 'bg-secondary text-on-secondary' : 'bg-surface-container text-secondary'}`}
                 >
                   <span className="material-symbols-outlined text-sm">play_circle</span>
@@ -568,20 +690,26 @@ export default function Practice(): JSX.Element {
 
             {/* ── SENTENCE AREA ─────────────────────────────────────────────
                 Outer div: flex centering container — hook sets font-size here.
-                Inner div: flex-wrap word container — hook measures ITS scrollHeight
-                vs outer's clientHeight (avoids content-center scrollHeight artifact).
+                Inner div: w-full text-center — CRITICAL: must have w-full so
+                  scrollHeight reflects proper multi-line wrapping at the container
+                  width. Without w-full, flexbox auto-sizes to max-content (widest
+                  word), words stack vertically in that narrow column, scrollHeight
+                  is always too tall, and binary-search converges to minPx.
+                Words: inline-flex so they flow inline and wrap across full width.
             ── */}
             <div
               ref={sentenceBoxRef}
-              className="flex-1 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1"
+              data-testid="current-sentence-box"
+              className="flex-1 min-w-0 min-h-0 overflow-hidden flex items-center justify-center px-6 py-1"
             >
               <div
-                className="flex flex-wrap justify-center gap-x-[0.35em] gap-y-[0.35em] cursor-text"
+                data-testid="current-sentence-text"
+                className="w-full max-w-full max-h-full min-w-0 text-center cursor-text whitespace-normal [overflow-wrap:anywhere] break-words leading-[1.15]"
                 onMouseUp={handleTextSelect}
               >
                 {words.map((word, i) => (
-                  <div key={i} className="flex flex-col items-center">
-                    <span className="font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-all select-text leading-tight">
+                  <span key={i} className="inline-flex max-w-full flex-col items-center align-top mx-[0.175em] my-[0.175em] whitespace-normal [overflow-wrap:anywhere] break-words">
+                    <span className="max-w-full font-medium text-on-surface border-b-4 border-transparent px-[0.1em] pb-[0.05em] hover:border-primary hover:bg-secondary-container/30 rounded-t-md transition-colors select-text whitespace-normal [overflow-wrap:anywhere] break-words leading-[1.15]">
                       {word}
                     </span>
                     {showIPA && (
@@ -589,7 +717,7 @@ export default function Practice(): JSX.Element {
                         /{word.toLowerCase().replace(/[^a-z]/g, '')}/
                       </span>
                     )}
-                  </div>
+                  </span>
                 ))}
               </div>
             </div>
@@ -679,19 +807,23 @@ export default function Practice(): JSX.Element {
               {/* Transport controls — compact w-9 h-9 buttons */}
               <div className="flex items-center gap-3">
                 <button
-                  onClick={() => setCurrentIdx((i) => Math.max(0, i - 1))}
+                  onClick={goToPrevious}
                   disabled={currentIdx === 0}
+                  title="Previous sentence"
+                  aria-label="Previous sentence"
                   className="w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
                 >
                   <span className="material-symbols-outlined text-[20px]">skip_previous</span>
                 </button>
 
                 <button
-                  onClick={() => isMediaPlaying ? pauseMedia() : playSegment()}
+                  onClick={handlePlayPause}
+                  disabled={!canPlayMedia}
                   className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
                     isMediaPlaying ? 'border-primary bg-primary-fixed text-primary' : 'border-outline-variant text-secondary hover:bg-surface-container'
-                  }`}
-                  title="Play / Pause segment"
+                  } disabled:opacity-30 disabled:cursor-not-allowed`}
+                  title={canPlayMedia ? 'Play / Pause segment' : 'No media available for this session'}
+                  aria-label={isMediaPlaying ? 'Pause current sentence' : 'Play current sentence'}
                 >
                   <span className="material-symbols-outlined text-[20px]" style={{ fontVariationSettings: isMediaPlaying ? "'FILL' 1" : "'FILL' 0" }}>
                     {isMediaPlaying ? 'pause' : 'play_arrow'}
@@ -700,8 +832,8 @@ export default function Practice(): JSX.Element {
 
                 <button
                   onClick={() => playTts()}
-                  disabled={ttsPlaying}
-                  title="AI Voice"
+                  disabled={!canSpeakAI || ttsPlaying}
+                  title={canSpeakAI ? 'AI Voice' : 'AI Voice unavailable'}
                   className={`w-9 h-9 rounded-full border-2 flex items-center justify-center transition-all ${
                     ttsPlaying ? 'border-tertiary bg-tertiary-container animate-pulse text-tertiary' : 'border-outline-variant text-secondary hover:bg-surface-container'
                   } disabled:opacity-60`}
@@ -713,7 +845,7 @@ export default function Practice(): JSX.Element {
 
                 {isRecording ? (
                   <button
-                    onClick={stopRecording}
+                    onClick={handleRecord}
                     className="px-5 py-2 bg-error text-on-error rounded-full flex items-center gap-1.5 shadow-md recording-active text-sm font-bold"
                   >
                     <span className="material-symbols-outlined text-[18px]" style={{ fontVariationSettings: "'FILL' 1" }}>stop</span>
@@ -721,7 +853,7 @@ export default function Practice(): JSX.Element {
                   </button>
                 ) : (
                   <button
-                    onClick={startRecording}
+                    onClick={handleRecord}
                     disabled={transcribing}
                     className="px-5 py-2 bg-primary text-on-primary rounded-full flex items-center gap-1.5 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50 text-sm font-bold"
                   >
@@ -731,8 +863,10 @@ export default function Practice(): JSX.Element {
                 )}
 
                 <button
-                  onClick={() => setCurrentIdx((i) => Math.min(segments.length - 1, i + 1))}
+                  onClick={goToNext}
                   disabled={currentIdx === segments.length - 1}
+                  title="Next sentence"
+                  aria-label="Next sentence"
                   className="w-9 h-9 rounded-full border-2 border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30"
                 >
                   <span className="material-symbols-outlined text-[20px]">skip_next</span>
@@ -769,7 +903,7 @@ export default function Practice(): JSX.Element {
                 <div
                   key={seg.id}
                   data-active={String(isActive)}
-                  onClick={() => !isFuture && setCurrentIdx(idx)}
+                  onClick={() => !isFuture && goToSegment(idx)}
                   className={`p-4 rounded-xl flex flex-col gap-2 transition-all ${
                     isActive   ? 'border-l-4 border-primary bg-secondary-container shadow-sm' :
                     isFuture   ? 'border border-outline-variant bg-white opacity-50 grayscale cursor-not-allowed' :
@@ -808,47 +942,70 @@ export default function Practice(): JSX.Element {
       </div>
 
       {/* FLOATING CONTROLS */}
-      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-auto rounded-full px-3 py-1.5 bg-surface-container border border-outline-variant shadow-lg flex items-center gap-1 z-50">
+      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-auto max-w-[calc(100vw-2rem)] rounded-full px-3 py-1.5 bg-surface-container border border-outline-variant shadow-lg flex items-center gap-1 z-50 overflow-x-auto no-scrollbar">
         <select
           value={playbackSpeed}
-          onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+          onChange={(e) => handlePlaybackRateChange(Number(e.target.value))}
+          aria-label="Playback speed"
           className="px-4 py-2 text-secondary bg-transparent rounded-full text-label-sm font-semibold outline-none cursor-pointer hover:bg-surface-container-high"
         >
           {[0.5, 0.75, 1.0, 1.25, 1.5].map((s) => <option key={s} value={s}>{s}x</option>)}
         </select>
         <button
-          onClick={() => isMediaPlaying ? pauseMedia() : playSegment()}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${isMediaPlaying ? 'text-primary' : 'text-secondary hover:bg-surface-container-high'}`}
+          onClick={goToPrevious}
+          disabled={currentIdx === 0}
+          title="Previous sentence"
+          aria-label="Previous sentence"
+          className="w-9 h-9 shrink-0 rounded-full text-secondary hover:bg-surface-container-high transition-colors disabled:opacity-30"
+        >
+          <span className="material-symbols-outlined">skip_previous</span>
+        </button>
+        <button
+          onClick={handlePlayPause}
+          disabled={!canPlayMedia}
+          title={canPlayMedia ? 'Play or pause current sentence' : 'No media available for this session'}
+          className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${isMediaPlaying ? 'text-primary' : 'text-secondary hover:bg-surface-container-high'} disabled:opacity-30 disabled:cursor-not-allowed`}
         >
           <span className="material-symbols-outlined">{isMediaPlaying ? 'pause' : 'play_arrow'}</span>
           <span className="text-label-sm">{isMediaPlaying ? 'Pause' : 'Play'}</span>
         </button>
         <button
-          onClick={() => setLooping((v) => !v)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${looping ? 'bg-primary text-on-primary shadow-md' : 'text-secondary hover:bg-surface-container-high'}`}
+          onClick={goToNext}
+          disabled={currentIdx === segments.length - 1}
+          title="Next sentence"
+          aria-label="Next sentence"
+          className="w-9 h-9 shrink-0 rounded-full text-secondary hover:bg-surface-container-high transition-colors disabled:opacity-30"
+        >
+          <span className="material-symbols-outlined">skip_next</span>
+        </button>
+        <button
+          onClick={handleToggleLoop}
+          aria-pressed={looping}
+          className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-all ${looping ? 'bg-primary text-on-primary shadow-md' : 'text-secondary hover:bg-surface-container-high'}`}
         >
           <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>repeat</span>
           <span className="text-label-sm">Loop</span>
         </button>
         <button
-          onClick={() => setAutoPlay((v) => !v)}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${autoPlay ? 'bg-secondary text-on-secondary shadow-md' : 'text-secondary hover:bg-surface-container-high'}`}
+          onClick={handleToggleAuto}
+          aria-pressed={autoPlay}
+          className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-all ${autoPlay ? 'bg-secondary text-on-secondary shadow-md' : 'text-secondary hover:bg-surface-container-high'}`}
         >
           <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>play_circle</span>
           <span className="text-label-sm">Auto</span>
         </button>
         <button
           onClick={() => playTts()}
-          disabled={ttsPlaying}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${ttsPlaying ? 'text-tertiary animate-pulse' : 'text-secondary hover:bg-surface-container-high'} disabled:opacity-50`}
+          disabled={!canSpeakAI || ttsPlaying}
+          className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${ttsPlaying ? 'text-tertiary animate-pulse' : 'text-secondary hover:bg-surface-container-high'} disabled:opacity-50`}
         >
           <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>record_voice_over</span>
           <span className="text-label-sm">AI Voice</span>
         </button>
         <button
-          onClick={isRecording ? stopRecording : startRecording}
+          onClick={handleRecord}
           disabled={transcribing}
-          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-colors ${isRecording ? 'text-error hover:bg-error-container/20' : 'text-secondary hover:bg-surface-container-high'} disabled:opacity-50`}
+          className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-full transition-colors ${isRecording ? 'text-error hover:bg-error-container/20' : 'text-secondary hover:bg-surface-container-high'} disabled:opacity-50`}
         >
           <span className="material-symbols-outlined">{isRecording ? 'stop' : 'mic'}</span>
           <span className="text-label-sm">{isRecording ? 'Stop' : 'Record'}</span>

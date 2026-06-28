@@ -29,7 +29,8 @@ echo "  ✅ DMG created"
 
 echo ""
 echo "=== Build complete! ==="
-DMG=$(ls release/*.dmg 2>/dev/null | head -1)
+VERSION=$(node -p "require('./package.json').version")
+DMG=$(find release -maxdepth 1 -type f -name "Daily Speaking-${VERSION}-*.dmg" -print -quit)
 if [ -n "$DMG" ]; then
   SIZE=$(du -sh "$DMG" | cut -f1)
   echo "  Output: $DMG ($SIZE)"

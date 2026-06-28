@@ -532,6 +532,14 @@ video {
   margin-left: 1rem;
   margin-right: 1rem;
 }
+.mx-\[0\.175em\]{
+  margin-left: 0.175em;
+  margin-right: 0.175em;
+}
+.my-\[0\.175em\]{
+  margin-top: 0.175em;
+  margin-bottom: 0.175em;
+}
 .mb-1{
   margin-bottom: 0.25rem;
 }
@@ -571,8 +579,14 @@ video {
 .block{
   display: block;
 }
+.inline{
+  display: inline;
+}
 .flex{
   display: flex;
+}
+.inline-flex{
+  display: inline-flex;
 }
 .grid{
   display: grid;
@@ -624,6 +638,9 @@ video {
 }
 .max-h-\[80vh\]{
   max-height: 80vh;
+}
+.max-h-full{
+  max-height: 100%;
 }
 .min-h-0{
   min-height: 0px;
@@ -694,6 +711,9 @@ video {
 .max-w-\[360px\]{
   max-width: 360px;
 }
+.max-w-\[calc\(100vw-2rem\)\]{
+  max-width: calc(100vw - 2rem);
+}
 .max-w-full{
   max-width: 100%;
 }
@@ -705,6 +725,9 @@ video {
 }
 .flex-1{
   flex: 1 1 0%;
+}
+.flex-\[0\.8\]{
+  flex: 0.8;
 }
 .flex-\[1\.2\]{
   flex: 1.2;
@@ -788,9 +811,6 @@ video {
 .flex-wrap{
   flex-wrap: wrap;
 }
-.content-center{
-  align-content: center;
-}
 .items-start{
   align-items: flex-start;
 }
@@ -836,18 +856,14 @@ video {
 .gap-stack-gap{
   gap: 16px;
 }
-.gap-x-\[0\.35em\]{
-  -moz-column-gap: 0.35em;
-       column-gap: 0.35em;
-}
-.gap-y-\[0\.35em\]{
-  row-gap: 0.35em;
-}
 .self-start{
   align-self: flex-start;
 }
 .overflow-hidden{
   overflow: hidden;
+}
+.overflow-x-auto{
+  overflow-x: auto;
 }
 .overflow-y-auto{
   overflow-y: auto;
@@ -856,6 +872,12 @@ video {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.whitespace-normal{
+  white-space: normal;
+}
+.break-words{
+  overflow-wrap: break-word;
 }
 .rounded{
   border-radius: 0.25rem;
@@ -1178,6 +1200,9 @@ video {
 .text-center{
   text-align: center;
 }
+.align-top{
+  vertical-align: top;
+}
 .font-ipa-label{
   font-family: "JetBrains Mono", monospace;
 }
@@ -1285,11 +1310,11 @@ video {
 .italic{
   font-style: italic;
 }
+.leading-\[1\.15\]{
+  line-height: 1.15;
+}
 .leading-relaxed{
   line-height: 1.625;
-}
-.leading-tight{
-  line-height: 1.25;
 }
 .tracking-wider{
   letter-spacing: 0.05em;
@@ -1453,6 +1478,9 @@ video {
 }
 .duration-500{
   transition-duration: 500ms;
+}
+.\[overflow-wrap\:anywhere\]{
+  overflow-wrap: anywhere;
 }
 * {
   -webkit-font-smoothing: antialiased;

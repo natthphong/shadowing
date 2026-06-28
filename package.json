@@ -1,7 +1,7 @@
 {
   "name": "daily-speaking",
   "productName": "Daily Speaking",
-  "version": "0.0.8",
+  "version": "0.0.11",
   "description": "English shadowing and speaking practice for Thai learners",
   "main": "out/main/index.js",
   "author": "Daily Speaking",
@@ -10,7 +10,9 @@
     "build": "electron-vite build",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "pack": "electron-builder --dir",
-    "dist:mac": "npm run build && electron-builder --mac dmg"
+    "dist:mac": "npm run build && electron-builder --mac dmg",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "build": {
     "appId": "com.dailyspeaking.app",
@@ -27,7 +29,9 @@
       {
         "from": "resources/",
         "to": ".",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
@@ -36,7 +40,9 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64"]
+          "arch": [
+            "arm64"
+          ]
         }
       ],
       "hardenedRuntime": false,
@@ -47,10 +53,22 @@
       "title": "Daily Speaking",
       "icon": "build/icon.icns",
       "contents": [
-        { "x": 130, "y": 220, "type": "file" },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220,
+          "type": "file"
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ],
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     }
   },
   "dependencies": {
@@ -68,10 +86,12 @@
     "@types/react-dom": "^18.3.0",
     "@types/uuid": "^9.0.8",
     "@vitejs/plugin-react": "^4.3.1",
+    "@vitest/ui": "^4.1.9",
     "autoprefixer": "^10.4.19",
     "electron": "^31.0.2",
     "electron-builder": "^24.13.3",
     "electron-vite": "^2.3.0",
+    "jsdom": "^29.1.1",
     "postcss": "^8.4.39",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -79,6 +99,7 @@
     "tailwindcss": "^3.4.4",
     "typescript": "^5.5.2",
     "vite": "^5.3.1",
+    "vitest": "^4.1.9",
     "zustand": "^4.5.4"
   }
 }
