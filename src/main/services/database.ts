@@ -129,6 +129,33 @@ export function initDatabase(): void {
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS session_quizzes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      questions TEXT NOT NULL,
+      tags TEXT DEFAULT '[]',
+      model TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quiz_attempts (
+      id TEXT PRIMARY KEY,
+      quiz_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      answers TEXT NOT NULL,
+      correct_count INTEGER NOT NULL,
+      total_questions INTEGER NOT NULL,
+      score REAL NOT NULL,
+      completed_at TEXT NOT NULL,
+      FOREIGN KEY (quiz_id) REFERENCES session_quizzes(id) ON DELETE CASCADE,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_quizzes_session ON session_quizzes(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_quiz_attempts_session ON quiz_attempts(session_id, completed_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL

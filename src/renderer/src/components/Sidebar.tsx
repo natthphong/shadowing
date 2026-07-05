@@ -78,6 +78,15 @@ export default function Sidebar(): JSX.Element {
             )}
           </NavLink>
 
+          <NavLink to="/exam-history" className={navClass}>
+            {({ isActive }) => (
+              <>
+                <span className="material-symbols-outlined" style={iconFill(isActive)}>history_edu</span>
+                <span>Exam History</span>
+              </>
+            )}
+          </NavLink>
+
           <NavLink to="/grammar" className={navClass}>
             {({ isActive }) => (
               <>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Session } from '../types'
 
@@ -7,14 +7,28 @@ export default function Sessions(): JSX.Element {
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
 
-  const load = async (): Promise<void> => {
+  const load = useCallback(async (): Promise<void> => {
     setLoading(true)
-    const data = await window.api.sessions.list()
-    setSessions(data as Session[])
+    const data = await window.api.sessions.list() as Session[]
+    const reconciled = await Promise.all(data.map(async (session) => {
+      const saved = localStorage.getItem(`progress_max_${session.id}`) ?? localStorage.getItem(`progress_${session.id}`)
+      const savedIndex = saved === null ? -1 : Number.parseInt(saved, 10)
+      const localProgress = session.total_segments > 0 && Number.isInteger(savedIndex) && savedIndex >= 0
+        ? Math.min(100, Math.round(((savedIndex + 1) / session.total_segments) * 100))
+        : 0
+      if (localProgress > session.completion_percentage) {
+        await window.api.sessions.updateProgress(session.id, {
+          completion_percentage: localProgress,
+          ...(localProgress >= 100 ? { completed_at: new Date().toISOString() } : {})
+        })
+      }
+      return { ...session, completion_percentage: Math.max(session.completion_percentage, localProgress) }
+    }))
+    setSessions(reconciled)
     setLoading(false)
-  }
+  }, [])
 
-  useEffect(() => { void load() }, [])
+  useEffect(() => { void load() }, [load])
 
   const deleteSession = async (id: string, e: React.MouseEvent): Promise<void> => {
     e.stopPropagation()
@@ -51,10 +65,14 @@ export default function Sessions(): JSX.Element {
           </div>
         ) : (
           <div className="grid gap-4 max-w-4xl">
-            {sessions.map((session) => (
+            {sessions.map((session) => {
+              const progress = Math.max(0, Math.min(100, session.completion_percentage || 0))
+              const examCount = session.exam_attempt_count || 0
+              return (
               <div
                 key={session.id}
                 onClick={() => navigate(`/practice/${session.id}`)}
+                data-testid={`session-card-${session.id}`}
                 className="p-5 bg-white rounded-2xl border border-outline-variant hover:border-primary/40 hover:shadow-sm cursor-pointer transition-all flex gap-5 items-start group"
               >
                 {/* Thumbnail / icon */}
@@ -71,7 +89,14 @@ export default function Sessions(): JSX.Element {
                 {/* Info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-4">
-                    <h3 className="font-bold text-on-surface truncate">{session.title}</h3>
+                    <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                      <h3 className="font-bold text-on-surface truncate">{session.title}</h3>
+                      {progress >= 100 && (
+                        <span className="px-2 py-0.5 rounded-full bg-tertiary-container/20 text-tertiary text-[10px] font-bold uppercase tracking-wide">
+                          {examCount > 0 ? `${examCount} exam${examCount > 1 ? 's' : ''}` : 'Exam ready'}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={(e) => deleteSession(session.id, e)}
@@ -81,24 +106,39 @@ export default function Sessions(): JSX.Element {
                       </button>
                     </div>
                   </div>
-                  <p className="text-sm text-secondary mt-1">{formatDate(session.created_at)}</p>
+                  <div className="flex items-center justify-between gap-3 mt-1">
+                    <p className="text-sm text-secondary">{formatDate(session.created_at)}</p>
+                    {progress >= 100 && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          navigate(`/exam/${session.id}`)
+                        }}
+                        className="flex items-center gap-1 px-3 py-1 rounded-lg bg-primary-fixed text-primary text-xs font-bold hover:bg-secondary-container transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[15px]">quiz</span>
+                        {examCount > 0 ? 'Retake / Review' : 'Take Exam'}
+                      </button>
+                    )}
+                  </div>
 
                   {/* Progress */}
                   <div className="mt-3">
                     <div className="flex justify-between text-xs text-on-surface-variant mb-1">
                       <span>{session.total_segments || 0} sentences</span>
-                      <span>{Math.round(session.completion_percentage)}% complete</span>
+                      <span>{Math.round(progress)}% complete</span>
                     </div>
                     <div className="h-1.5 bg-surface-container rounded-full overflow-hidden">
                       <div
                         className="h-full bg-primary rounded-full"
-                        style={{ width: `${session.completion_percentage}%` }}
+                        style={{ width: `${progress}%` }}
                       />
                     </div>
                   </div>
                 </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>

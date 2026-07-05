@@ -6,7 +6,9 @@ export function registerSessionHandlers(): void {
     const db = getDb()
     return db
       .prepare(
-        `SELECT s.*, src.type as source_type, src.url, src.thumbnail
+        `SELECT s.*, src.type as source_type, src.url, src.thumbnail,
+                (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.session_id = s.id) as exam_attempt_count,
+                EXISTS(SELECT 1 FROM session_quizzes sq WHERE sq.session_id = s.id) as has_exam
          FROM sessions s
          LEFT JOIN sources src ON s.source_id = src.id
          ORDER BY s.created_at DESC`
@@ -54,11 +56,29 @@ export function registerSessionHandlers(): void {
     completed_at?: string
   }) => {
     const db = getDb()
-    const sets = Object.entries(data)
-      .map(([k]) => `${k} = ?`)
-      .join(', ')
-    const vals = [...Object.values(data), sessionId]
-    db.prepare(`UPDATE sessions SET ${sets} WHERE id = ?`).run(...vals)
+    const current = db
+      .prepare('SELECT completion_percentage, practice_duration_seconds, completed_at FROM sessions WHERE id = ?')
+      .get(sessionId) as {
+        completion_percentage: number
+        practice_duration_seconds: number
+        completed_at: string | null
+      } | undefined
+    if (!current) return false
+
+    const requestedCompletion = typeof data.completion_percentage === 'number'
+      ? Math.max(0, Math.min(100, data.completion_percentage))
+      : current.completion_percentage
+    const completion = Math.max(current.completion_percentage, requestedCompletion)
+    const duration = typeof data.practice_duration_seconds === 'number'
+      ? Math.max(current.practice_duration_seconds, Math.round(data.practice_duration_seconds))
+      : current.practice_duration_seconds
+    const completedAt = current.completed_at || (completion >= 100 ? data.completed_at || new Date().toISOString() : null)
+
+    db.prepare(`
+      UPDATE sessions
+      SET completion_percentage = ?, practice_duration_seconds = ?, completed_at = ?
+      WHERE id = ?
+    `).run(completion, duration, completedAt, sessionId)
     return true
   })
 

@@ -40,6 +40,14 @@ interface Window {
       delete: (id: string) => Promise<boolean>
       stats: () => Promise<unknown>
     }
+    exam: {
+      getForSession: (sessionId: string) => Promise<import('./types').ExamSessionData>
+      generate: (sessionId: string, questionCount?: number) => Promise<import('./types').ExamQuiz>
+      submit: (quizId: string, answers: Array<number | null>) => Promise<import('./types').ExamReview>
+      getAttempt: (attemptId: string) => Promise<import('./types').ExamReview | null>
+      history: () => Promise<import('./types').ExamHistoryEntry[]>
+      onProgress: (cb: (data: { status: string; msg: string }) => void) => () => void
+    }
     dashboard: {
       stats: () => Promise<unknown>
     }
