@@ -170,7 +170,7 @@ export function registerPracticeHandlers(getWindow: () => BrowserWindow | null):
       const tomorrow = new Date(Date.now() + 86400000).toISOString()
       const tx = db.transaction(() => {
         for (const s of lowSegs) {
-          insertCard.run(`card_${uuidv4()}`, 'sentence_speaking', s.translate || s.original, s.original, s.id, sessionId, tomorrow)
+          insertCard.run(`card_${uuidv4()}`, 'sentence_speaking', s.original, s.translate || s.original, s.id, sessionId, tomorrow)
         }
       })
       tx()

@@ -26,8 +26,9 @@ const api = {
     getAttempts: (segmentId) => electron.ipcRenderer.invoke("practice:get-attempts", segmentId),
     analyzeSession: (sessionId) => electron.ipcRenderer.invoke("practice:session-analyze", sessionId),
     onAnalysisProgress: (cb) => {
-      electron.ipcRenderer.on("analysis:progress", (_e, data) => cb(data));
-      return () => electron.ipcRenderer.removeAllListeners("analysis:progress");
+      const listener = (_event, data) => cb(data);
+      electron.ipcRenderer.on("analysis:progress", listener);
+      return () => electron.ipcRenderer.removeListener("analysis:progress", listener);
     }
   },
   // Translation
@@ -43,7 +44,36 @@ const api = {
     create: (data) => electron.ipcRenderer.invoke("flashcard:create", data),
     exists: (front) => electron.ipcRenderer.invoke("flashcard:exists", front),
     delete: (id) => electron.ipcRenderer.invoke("flashcard:delete", id),
+    deleteMany: (ids) => electron.ipcRenderer.invoke("flashcard:delete-many", ids),
+    update: (id, data) => electron.ipcRenderer.invoke("flashcard:update", id, data),
     stats: () => electron.ipcRenderer.invoke("flashcard:stats")
+  },
+  // Speaking Q&A practice
+  speaking: {
+    sessions: () => electron.ipcRenderer.invoke("speaking:sessions"),
+    generate: (sessionId, questionCount) => electron.ipcRenderer.invoke("speaking:generate", sessionId, questionCount),
+    transcribe: (audioPath) => electron.ipcRenderer.invoke("speaking:transcribe", audioPath),
+    evaluate: (questionId, transcript, audioPath) => electron.ipcRenderer.invoke("speaking:evaluate", questionId, transcript, audioPath),
+    answers: (questionId) => electron.ipcRenderer.invoke("speaking:answers", questionId),
+    history: () => electron.ipcRenderer.invoke("speaking:history"),
+    onProgress: (cb) => {
+      const listener = (_event, data) => cb(data);
+      electron.ipcRenderer.on("speaking:progress", listener);
+      return () => electron.ipcRenderer.removeListener("speaking:progress", listener);
+    }
+  },
+  // Post-session exams
+  exam: {
+    getForSession: (sessionId) => electron.ipcRenderer.invoke("exam:session:get", sessionId),
+    generate: (sessionId, questionCount = 7) => electron.ipcRenderer.invoke("exam:generate", sessionId, questionCount),
+    submit: (quizId, answers) => electron.ipcRenderer.invoke("exam:submit", quizId, answers),
+    getAttempt: (attemptId) => electron.ipcRenderer.invoke("exam:attempt:get", attemptId),
+    history: () => electron.ipcRenderer.invoke("exam:history"),
+    onProgress: (cb) => {
+      const listener = (_event, data) => cb(data);
+      electron.ipcRenderer.on("exam:progress", listener);
+      return () => electron.ipcRenderer.removeListener("exam:progress", listener);
+    }
   },
   // Dashboard
   dashboard: {
@@ -51,7 +81,8 @@ const api = {
   },
   // Grammar & Vocabulary
   grammar: {
-    list: () => electron.ipcRenderer.invoke("grammar:list")
+    list: () => electron.ipcRenderer.invoke("grammar:list"),
+    chat: (grammarId, messages) => electron.ipcRenderer.invoke("grammar:chat", grammarId, messages)
   },
   vocabulary: {
     list: () => electron.ipcRenderer.invoke("vocabulary:list")
@@ -78,6 +109,16 @@ const api = {
   // File dialog
   dialog: {
     openFile: () => electron.ipcRenderer.invoke("dialog:open-file")
+  },
+  // Full data export / import
+  data: {
+    exportAll: () => electron.ipcRenderer.invoke("data:export"),
+    importAll: () => electron.ipcRenderer.invoke("data:import"),
+    onProgress: (cb) => {
+      const listener = (_event, data) => cb(data);
+      electron.ipcRenderer.on("data:progress", listener);
+      return () => electron.ipcRenderer.removeListener("data:progress", listener);
+    }
   }
 };
 electron.contextBridge.exposeInMainWorld("api", api);

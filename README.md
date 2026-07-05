@@ -15,8 +15,15 @@ Daily Speaking is a local-first macOS desktop app for English shadowing and spea
 - Accuracy, pronunciation, rhythm, speed, and overall scores
 - Persisted session progress shared by Practice, Sessions, and Dashboard
 - Due-today SRS review plus a searchable **Show All** flashcard library
+- **Flashcard management** — add your own cards, edit, delete one, or multi-select and delete many; the daily queue is capped by a **Maximum Due Cards** setting
+- **Flashcard speaking review** — every card has an AI Voice button (cached locally after first play) and a **Speak** button that records you, transcribes with Whisper, and scores accuracy/pronunciation/rhythm/speed exactly like session practice
+- AI-created sentence cards show **English on the front, Thai on the back**
+- **Speaking Q&A** — pick a finished session and a question count; AI asks open-ended English questions (with Thai translation and voice), you answer out loud, and AI grades grammar and word order, corrects your sentence, and suggests a natural answer; retry to beat your score, and browse the full history of your past answers
+- **Grammar practice chat** — press Practice on any grammar topic and an AI tutor explains it in Thai, gives you situations to respond to in English, and corrects each answer (type or answer by voice)
 - Post-session AI analysis with vocabulary, grammar, and weak-sentence extraction
 - AI-generated 5/7/10-question comprehension exams with tags, saved attempts, answer review, and unlimited retakes
+- **Daily streak and 12-week activity heatmap** on the Dashboard, counting practice, flashcard reviews, speaking answers, and exams
+- **Export All / Import All** — back up the entire app (database, media, recordings, voice cache) to one zip and restore it on another Mac; media paths are relinked automatically so you continue where you left off
 - Local SQLite storage; no cloud account required
 
 The current release version is shown in the bottom-right corner of the app.
@@ -105,19 +112,22 @@ To install it, open the DMG and drag **Daily Speaking** into **Applications**. T
 
 1. **Import** — media is downloaded or read locally, audio is extracted, Whisper transcribes it, and the translation model produces Thai sentence translations.
 2. **Practice** — Electron plays only the active sentence range. Recording attempts are transcribed and scored, while progress is persisted to SQLite.
-3. **Review** — weak sentences and saved words become flashcards. Due Today follows the SRS schedule; Show All is a read-only library view.
+3. **Review** — weak sentences and saved words become flashcards (front English, back Thai). Due Today follows the SRS schedule and respects the Maximum Due Cards setting; Show All doubles as the card manager (add, edit, delete, multi-select delete). Each card can replay an AI voice from the local cache and score your spoken attempt.
 4. **Analyze** — the configured Post-Session Analysis model summarizes weaknesses and extracts vocabulary/grammar.
 5. **Exam** — after a session reaches 100%, the same analysis model creates a tagged comprehension quiz. Attempts, scores, selected answers, correct answers, and explanations are stored for history and retakes.
+6. **Speak** — Speaking Q&A generates open-ended questions from a finished session. Your spoken answer is transcribed by Whisper and graded by the analysis model for grammar and word order, with a corrected sentence and a suggested natural answer. Every attempt is saved to the My Answers history and counted on the Dashboard.
+7. **Grammar coaching** — the Grammar Library's Practice button opens a chat where the AI tutor teaches the topic in Thai and drills you with English challenges, correcting each response.
+8. **Backup & move machines** — Settings → Data Backup exports the database plus all media into a single zip; importing that zip on another Mac restores everything and relinks file paths automatically.
 
 ## Architecture
 
 ```text
 Electron main process
-├── SQLite and filesystem
+├── SQLite and filesystem (plus zip export/import of all data)
 ├── FFmpeg / yt-dlp / Whisper
-├── Ollama translation, analysis, TTS, and exam generation
+├── Ollama translation, analysis, TTS, exam and speaking-question generation
 └── IPC handlers
-    └── React renderer (Dashboard, Sessions, Practice, Flashcards, Exams)
+    └── React renderer (Dashboard, Sessions, Practice, Flashcards, Speaking Q&A, Grammar, Exams)
 ```
 
 Heavy transcription and model work runs outside the React renderer so the interface stays responsive. Model names and the Ollama URL can be changed from Settings without changing application code.

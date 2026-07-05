@@ -11,7 +11,8 @@ function getTtsScriptPath(): string {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, 'tts_generate.py')
   }
-  return path.join(__dirname, '../../../resources/tts_generate.py')
+  // Dev: compiled to out/main/index.js → app root is two levels up
+  return path.join(__dirname, '../../resources/tts_generate.py')
 }
 
 function textToCachePath(text: string): string {

@@ -106,6 +106,12 @@ export interface DashboardStats {
   totalGrammar: number
   dueFlashcards: number
   totalFlashcards: number
+  totalSpeakingAnswers: number
+  totalSpeakingQuestions: number
+  avgSpeakingScore: number
+  activityByDay: { day: string; count: number }[]
+  currentStreak: number
+  bestStreak: number
   recentSessions: (Session & { avg_score?: number })[]
   scoreByDay: { day: string; avg_score: number; count: number }[]
   topMissedWords: { word: string; c: number }[]
@@ -177,4 +183,57 @@ export interface ExamHistoryEntry extends ExamAttemptSummary {
   session_title: string
   quiz_title: string
   tags: string[]
+}
+
+export interface SpeakingQuestion {
+  id: string
+  session_id: string
+  question_en: string
+  question_th: string | null
+  position: number
+  batch_id: string | null
+  model: string | null
+  created_at: string
+}
+
+export interface SpeakingAnswer {
+  id: string
+  question_id: string
+  transcript: string
+  audio_path: string | null
+  score: number
+  grammar_ok: number
+  feedback_th: string | null
+  suggested_answer: string | null
+  created_at: string
+}
+
+export interface SpeakingEvaluationResult {
+  answerId: string
+  score: number
+  grammar_ok: boolean
+  feedback_th: string
+  corrected_sentence: string
+  suggested_answer: string
+}
+
+export interface SpeakingHistoryEntry {
+  id: string
+  session_id: string
+  question_en: string
+  question_th: string | null
+  batch_id: string | null
+  created_at: string
+  session_title: string
+  answer_count: number
+  best_score: number | null
+  last_transcript: string | null
+}
+
+export interface SpeakingSessionOption {
+  id: string
+  title: string
+  created_at: string
+  total_segments: number
+  question_count: number
 }

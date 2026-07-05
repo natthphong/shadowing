@@ -156,6 +156,34 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_session_quizzes_session ON session_quizzes(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_quiz_attempts_session ON quiz_attempts(session_id, completed_at DESC);
 
+    CREATE TABLE IF NOT EXISTS speaking_questions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      question_en TEXT NOT NULL,
+      question_th TEXT,
+      position INTEGER NOT NULL,
+      batch_id TEXT,
+      model TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS speaking_answers (
+      id TEXT PRIMARY KEY,
+      question_id TEXT NOT NULL,
+      transcript TEXT NOT NULL,
+      audio_path TEXT,
+      score REAL DEFAULT 0,
+      grammar_ok INTEGER DEFAULT 0,
+      feedback_th TEXT,
+      suggested_answer TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (question_id) REFERENCES speaking_questions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_speaking_questions_session ON speaking_questions(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_speaking_answers_question ON speaking_answers(question_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -176,9 +204,17 @@ export function initDatabase(): void {
     INSERT OR IGNORE INTO settings VALUES ('tts_model', 'legraphista/Orpheus:latest');
     INSERT OR IGNORE INTO settings VALUES ('low_score_threshold', '70');
     INSERT OR IGNORE INTO settings VALUES ('translate_workers', '2');
+    INSERT OR IGNORE INTO settings VALUES ('max_due_cards', '30');
   `)
 
   log.info('Database initialized')
+}
+
+export function closeDatabase(): void {
+  if (db && db.open) {
+    db.pragma('wal_checkpoint(TRUNCATE)')
+    db.close()
+  }
 }
 
 export function getSetting(key: string): string | null {

@@ -222,6 +222,61 @@ function initDatabase() {
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS session_quizzes (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      questions TEXT NOT NULL,
+      tags TEXT DEFAULT '[]',
+      model TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS quiz_attempts (
+      id TEXT PRIMARY KEY,
+      quiz_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      answers TEXT NOT NULL,
+      correct_count INTEGER NOT NULL,
+      total_questions INTEGER NOT NULL,
+      score REAL NOT NULL,
+      completed_at TEXT NOT NULL,
+      FOREIGN KEY (quiz_id) REFERENCES session_quizzes(id) ON DELETE CASCADE,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_session_quizzes_session ON session_quizzes(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_quiz_attempts_session ON quiz_attempts(session_id, completed_at DESC);
+
+    CREATE TABLE IF NOT EXISTS speaking_questions (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      question_en TEXT NOT NULL,
+      question_th TEXT,
+      position INTEGER NOT NULL,
+      batch_id TEXT,
+      model TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS speaking_answers (
+      id TEXT PRIMARY KEY,
+      question_id TEXT NOT NULL,
+      transcript TEXT NOT NULL,
+      audio_path TEXT,
+      score REAL DEFAULT 0,
+      grammar_ok INTEGER DEFAULT 0,
+      feedback_th TEXT,
+      suggested_answer TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (question_id) REFERENCES speaking_questions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_speaking_questions_session ON speaking_questions(session_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_speaking_answers_question ON speaking_answers(question_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -242,8 +297,15 @@ function initDatabase() {
     INSERT OR IGNORE INTO settings VALUES ('tts_model', 'legraphista/Orpheus:latest');
     INSERT OR IGNORE INTO settings VALUES ('low_score_threshold', '70');
     INSERT OR IGNORE INTO settings VALUES ('translate_workers', '2');
+    INSERT OR IGNORE INTO settings VALUES ('max_due_cards', '30');
   `);
   log.info("Database initialized");
+}
+function closeDatabase() {
+  if (db && db.open) {
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    db.close();
+  }
 }
 function getSetting(key) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
@@ -282,7 +344,9 @@ function registerSessionHandlers() {
   electron.ipcMain.handle("session:list", () => {
     const db2 = getDb();
     return db2.prepare(
-      `SELECT s.*, src.type as source_type, src.url, src.thumbnail
+      `SELECT s.*, src.type as source_type, src.url, src.thumbnail,
+                (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.session_id = s.id) as exam_attempt_count,
+                EXISTS(SELECT 1 FROM session_quizzes sq WHERE sq.session_id = s.id) as has_exam
          FROM sessions s
          LEFT JOIN sources src ON s.source_id = src.id
          ORDER BY s.created_at DESC`
@@ -312,9 +376,17 @@ function registerSessionHandlers() {
   });
   electron.ipcMain.handle("session:update-progress", (_e, sessionId, data) => {
     const db2 = getDb();
-    const sets = Object.entries(data).map(([k]) => `${k} = ?`).join(", ");
-    const vals = [...Object.values(data), sessionId];
-    db2.prepare(`UPDATE sessions SET ${sets} WHERE id = ?`).run(...vals);
+    const current = db2.prepare("SELECT completion_percentage, practice_duration_seconds, completed_at FROM sessions WHERE id = ?").get(sessionId);
+    if (!current) return false;
+    const requestedCompletion = typeof data.completion_percentage === "number" ? Math.max(0, Math.min(100, data.completion_percentage)) : current.completion_percentage;
+    const completion = Math.max(current.completion_percentage, requestedCompletion);
+    const duration = typeof data.practice_duration_seconds === "number" ? Math.max(current.practice_duration_seconds, Math.round(data.practice_duration_seconds)) : current.practice_duration_seconds;
+    const completedAt = current.completed_at || (completion >= 100 ? data.completed_at || (/* @__PURE__ */ new Date()).toISOString() : null);
+    db2.prepare(`
+      UPDATE sessions
+      SET completion_percentage = ?, practice_duration_seconds = ?, completed_at = ?
+      WHERE id = ?
+    `).run(completion, duration, completedAt, sessionId);
     return true;
   });
   electron.ipcMain.handle("session:analysis:get", (_e, sessionId) => {
@@ -344,7 +416,7 @@ function getScriptPath() {
   if (electron.app.isPackaged) {
     return path.join(process.resourcesPath, "whisper_transcribe.py");
   }
-  return path.join(__dirname, "../../../resources/whisper_transcribe.py");
+  return path.join(__dirname, "../../resources/whisper_transcribe.py");
 }
 async function transcribeAudio(audioPath, onProgress) {
   const model = getSetting("whisper_model") || "mlx-community/whisper-large-v3-turbo";
@@ -639,6 +711,27 @@ async function ollamaGenerate(model, prompt, options) {
   const data = await res.json();
   return data.response.trim();
 }
+async function ollamaChat(model, messages, options) {
+  const url = `${baseUrl()}/api/chat`;
+  const body = {
+    model,
+    messages,
+    stream: false,
+    options: {
+      temperature: options?.temperature,
+      num_ctx: options?.num_ctx
+    },
+    think: false
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Ollama chat error: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.message.content.trim();
+}
 async function listModels() {
   try {
     const res = await fetch(`${baseUrl()}/api/tags`);
@@ -777,7 +870,7 @@ function getTtsScriptPath() {
   if (electron.app.isPackaged) {
     return path.join(process.resourcesPath, "tts_generate.py");
   }
-  return path.join(__dirname, "../../../resources/tts_generate.py");
+  return path.join(__dirname, "../../resources/tts_generate.py");
 }
 function textToCachePath(text) {
   const hash = crypto.createHash("md5").update(text.trim().toLowerCase()).digest("hex");
@@ -1262,7 +1355,7 @@ function registerPracticeHandlers(getWindow2) {
       const tomorrow = new Date(Date.now() + 864e5).toISOString();
       const tx = db2.transaction(() => {
         for (const s of lowSegs) {
-          insertCard.run(`card_${uuid.v4()}`, "sentence_speaking", s.translate || s.original, s.original, s.id, sessionId, tomorrow);
+          insertCard.run(`card_${uuid.v4()}`, "sentence_speaking", s.original, s.translate || s.original, s.id, sessionId, tomorrow);
         }
       });
       tx();
@@ -1290,7 +1383,8 @@ function registerFlashcardHandlers() {
   });
   electron.ipcMain.handle("flashcard:due", () => {
     const now = (/* @__PURE__ */ new Date()).toISOString();
-    return getDb().prepare("SELECT * FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL ORDER BY next_due_at ASC LIMIT 50").all(now);
+    const maxDue = Math.max(1, parseInt(getSetting("max_due_cards") || "30", 10) || 30);
+    return getDb().prepare("SELECT * FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL ORDER BY next_due_at ASC LIMIT ?").all(now, maxDue);
   });
   electron.ipcMain.handle("flashcard:review", (_e, cardId, rating) => {
     const db2 = getDb();
@@ -1349,13 +1443,32 @@ function registerFlashcardHandlers() {
     getDb().prepare("DELETE FROM flashcards WHERE id = ?").run(cardId);
     return true;
   });
+  electron.ipcMain.handle("flashcard:delete-many", (_e, cardIds) => {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) return 0;
+    const db2 = getDb();
+    const del = db2.prepare("DELETE FROM flashcards WHERE id = ?");
+    const tx = db2.transaction((ids) => {
+      let count = 0;
+      for (const id of ids) count += del.run(id).changes;
+      return count;
+    });
+    return tx(cardIds);
+  });
+  electron.ipcMain.handle("flashcard:update", (_e, cardId, data) => {
+    const db2 = getDb();
+    const card = db2.prepare("SELECT id FROM flashcards WHERE id = ?").get(cardId);
+    if (!card) return false;
+    db2.prepare("UPDATE flashcards SET type = COALESCE(?, type), front = COALESCE(?, front), back = COALESCE(?, back) WHERE id = ?").run(data.type ?? null, data.front ?? null, data.back ?? null, cardId);
+    return true;
+  });
   electron.ipcMain.handle("flashcard:stats", () => {
     const db2 = getDb();
     const now = (/* @__PURE__ */ new Date()).toISOString();
+    const maxDue = Math.max(1, parseInt(getSetting("max_due_cards") || "30", 10) || 30);
     const total = db2.prepare("SELECT COUNT(*) as c FROM flashcards").get().c;
     const due = db2.prepare("SELECT COUNT(*) as c FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL").get(now).c;
     const byType = db2.prepare("SELECT type, COUNT(*) as c FROM flashcards GROUP BY type").all();
-    return { total, due, byType };
+    return { total, due: Math.min(due, maxDue), totalDue: due, byType };
   });
 }
 function registerDashboardHandlers() {
@@ -1392,7 +1505,44 @@ function registerDashboardHandlers() {
         WHERE priority = 'high'
         GROUP BY word ORDER BY c DESC LIMIT 10
       `).all();
+    const speaking = db2.prepare("SELECT COUNT(*) as c, AVG(score) as a FROM speaking_answers").get();
+    const speakingQuestions = db2.prepare("SELECT COUNT(*) as c FROM speaking_questions").get().c;
+    const activityByDay = db2.prepare(`
+        SELECT day, SUM(c) as count FROM (
+          SELECT date(created_at) as day, COUNT(*) as c FROM practice_attempts GROUP BY day
+          UNION ALL SELECT date(reviewed_at) as day, COUNT(*) as c FROM review_history GROUP BY day
+          UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM speaking_answers GROUP BY day
+          UNION ALL SELECT date(completed_at) as day, COUNT(*) as c FROM quiz_attempts GROUP BY day
+        )
+        WHERE day IS NOT NULL
+        GROUP BY day ORDER BY day ASC
+      `).all();
+    const dayMs = 864e5;
+    const days = activityByDay.map((r) => r.day);
+    const daySet = new Set(days);
+    const todayStr = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    let currentStreak = 0;
+    let cursor = daySet.has(todayStr) ? Date.parse(todayStr) : Date.parse(todayStr) - dayMs;
+    while (daySet.has(new Date(cursor).toISOString().slice(0, 10))) {
+      currentStreak += 1;
+      cursor -= dayMs;
+    }
+    let bestStreak = 0;
+    let runLength = 0;
+    let prevTime = 0;
+    for (const day of days) {
+      const t = Date.parse(day);
+      runLength = prevTime && t - prevTime === dayMs ? runLength + 1 : 1;
+      bestStreak = Math.max(bestStreak, runLength);
+      prevTime = t;
+    }
     return {
+      totalSpeakingAnswers: speaking.c,
+      totalSpeakingQuestions: speakingQuestions,
+      avgSpeakingScore: Math.round((speaking.a ?? 0) * 10) / 10,
+      activityByDay,
+      currentStreak,
+      bestStreak,
       totalSessions,
       totalSegments,
       totalAttempts,
@@ -1424,7 +1574,8 @@ function registerSettingsHandlers() {
       "embedding_model",
       "tts_model",
       "low_score_threshold",
-      "translate_workers"
+      "translate_workers",
+      "max_due_cards"
     ];
     const result = {};
     for (const k of keys) {
@@ -1478,6 +1629,642 @@ function registerTtsHandlers() {
       return { path: audioPath };
     } catch (err) {
       log.error("TTS error:", err);
+      throw err;
+    }
+  });
+}
+function extractJSONObject(text) {
+  const cleaned = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const start = cleaned.indexOf("{");
+  if (start < 0) throw new Error("Quiz response did not contain JSON");
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < cleaned.length; index += 1) {
+    const char = cleaned[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return cleaned.slice(start, index + 1);
+    }
+  }
+  throw new Error("Quiz JSON was incomplete");
+}
+function cleanText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function parseGeneratedExam(raw) {
+  const parsed = JSON.parse(extractJSONObject(raw));
+  const rawQuestions = Array.isArray(parsed.questions) ? parsed.questions : [];
+  const questions = rawQuestions.flatMap((entry, index) => {
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry;
+    const question = cleanText(item.question);
+    const options = Array.isArray(item.options) ? item.options.map(cleanText) : [];
+    const correctIndex = Number(item.correctIndex);
+    if (!question || options.length !== 4 || options.some((option) => !option) || !Number.isInteger(correctIndex) || correctIndex < 0 || correctIndex > 3) return [];
+    return [{
+      id: cleanText(item.id) || `q${index + 1}`,
+      question,
+      options,
+      correctIndex,
+      explanation: cleanText(item.explanation) || "Review the source transcript for this answer.",
+      tag: cleanText(item.tag) || "Comprehension"
+    }];
+  }).slice(0, 10);
+  if (questions.length < 5) {
+    throw new Error(`Quiz must contain at least 5 valid questions; received ${questions.length}`);
+  }
+  const suppliedTags = Array.isArray(parsed.tags) ? parsed.tags.map(cleanText).filter(Boolean) : [];
+  const tags = Array.from(/* @__PURE__ */ new Set([...suppliedTags, ...questions.map((question) => question.tag)])).slice(0, 6);
+  return {
+    title: cleanText(parsed.title) || "Post-Session Comprehension Quiz",
+    tags,
+    questions
+  };
+}
+function gradeExam(questions, answers) {
+  const correctCount = questions.reduce(
+    (count, question, index) => count + (answers[index] === question.correctIndex ? 1 : 0),
+    0
+  );
+  const totalQuestions = questions.length;
+  const score = totalQuestions > 0 ? Math.round(correctCount / totalQuestions * 100) : 0;
+  return { correctCount, totalQuestions, score };
+}
+async function generateExamQuiz(data) {
+  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const questionCount = Math.max(5, Math.min(10, data.questionCount ?? 7));
+  const transcript = data.segments.map((segment) => `${segment.position + 1}. ${segment.original}${segment.translate ? `
+Thai: ${segment.translate}` : ""}`).join("\n").slice(0, 24e3);
+  const prompt = `You create short comprehension exams for an English shadowing application.
+
+Session title: ${data.sessionTitle}
+Transcript:
+${transcript}
+
+Create exactly ${questionCount} multiple-choice questions about the meaning, facts, sequence, main idea, and speaker intent in the clip.
+- Questions and options must be in English.
+- Every question must have exactly 4 plausible options.
+- correctIndex is zero-based (0-3).
+- explanation should be a concise Thai explanation of why the answer is correct.
+- tag is a short category such as Main Idea, Detail, Sequence, Vocabulary, or Speaker Intent.
+- Do not ask about information outside the transcript.
+
+Return ONLY strict JSON with this shape, without markdown or commentary:
+{
+  "title": "...",
+  "tags": ["Comprehension", "..."],
+  "questions": [
+    {
+      "id": "q1",
+      "question": "...",
+      "options": ["...", "...", "...", "..."],
+      "correctIndex": 0,
+      "explanation": "...",
+      "tag": "Main Idea"
+    }
+  ]
+}`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 16384 });
+      return { exam: parseGeneratedExam(raw), model };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Exam generation attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to generate exam");
+}
+function parseQuestions(row) {
+  return JSON.parse(row.questions);
+}
+function publicQuiz(row) {
+  return {
+    id: row.id,
+    session_id: row.session_id,
+    title: row.title,
+    tags: JSON.parse(row.tags || "[]"),
+    model: row.model,
+    created_at: row.created_at,
+    questions: parseQuestions(row).map(({ correctIndex: _correctIndex, explanation: _explanation, ...question }) => question)
+  };
+}
+function attemptSummary(row) {
+  return {
+    id: row.id,
+    quiz_id: row.quiz_id,
+    session_id: row.session_id,
+    correct_count: row.correct_count,
+    total_questions: row.total_questions,
+    score: row.score,
+    completed_at: row.completed_at
+  };
+}
+function reviewAttempt(attempt, quiz) {
+  const answers = JSON.parse(attempt.answers);
+  const questions = parseQuestions(quiz);
+  return {
+    attempt: attemptSummary(attempt),
+    quiz: {
+      id: quiz.id,
+      session_id: quiz.session_id,
+      title: quiz.title,
+      tags: JSON.parse(quiz.tags || "[]"),
+      model: quiz.model,
+      created_at: quiz.created_at,
+      questions: questions.map((question, index) => ({
+        ...question,
+        selectedIndex: answers[index] ?? null,
+        isCorrect: answers[index] === question.correctIndex
+      }))
+    }
+  };
+}
+function registerExamHandlers(getWindow2) {
+  electron.ipcMain.handle("exam:session:get", (_event, sessionId) => {
+    const db2 = getDb();
+    const quiz = db2.prepare("SELECT * FROM session_quizzes WHERE session_id = ? ORDER BY created_at DESC LIMIT 1").get(sessionId);
+    const attempts = db2.prepare("SELECT * FROM quiz_attempts WHERE session_id = ? ORDER BY completed_at DESC").all(sessionId);
+    return { quiz: quiz ? publicQuiz(quiz) : null, attempts: attempts.map(attemptSummary) };
+  });
+  electron.ipcMain.handle("exam:generate", async (_event, sessionId, questionCount = 7) => {
+    const db2 = getDb();
+    const win = getWindow2();
+    const session = db2.prepare("SELECT id, title, completion_percentage FROM sessions WHERE id = ?").get(sessionId);
+    if (!session) throw new Error("Session not found");
+    if (session.completion_percentage < 100) throw new Error("Complete the session before taking the exam");
+    win?.webContents.send("exam:progress", { status: "reading", msg: "Reading the completed transcript..." });
+    const segments = db2.prepare("SELECT position, original, translate FROM segments WHERE session_id = ? ORDER BY position").all(sessionId);
+    if (segments.length === 0) throw new Error("This session has no transcript to quiz");
+    win?.webContents.send("exam:progress", { status: "generating", msg: "AI is creating comprehension questions..." });
+    const { exam, model } = await generateExamQuiz({
+      sessionTitle: session.title,
+      segments,
+      questionCount
+    });
+    win?.webContents.send("exam:progress", { status: "saving", msg: "Saving the exam for future retakes..." });
+    const id = `quiz_${uuid.v4()}`;
+    const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+    db2.prepare(`
+      INSERT INTO session_quizzes (id, session_id, title, questions, tags, model, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, sessionId, exam.title, JSON.stringify(exam.questions), JSON.stringify(exam.tags), model, createdAt);
+    const row = db2.prepare("SELECT * FROM session_quizzes WHERE id = ?").get(id);
+    win?.webContents.send("exam:progress", { status: "done", msg: "Exam ready!" });
+    return publicQuiz(row);
+  });
+  electron.ipcMain.handle("exam:submit", (_event, quizId, rawAnswers) => {
+    const db2 = getDb();
+    const quiz = db2.prepare("SELECT * FROM session_quizzes WHERE id = ?").get(quizId);
+    if (!quiz) throw new Error("Exam not found");
+    const questions = parseQuestions(quiz);
+    const answers = questions.map((_question, index) => {
+      const answer = rawAnswers[index];
+      return Number.isInteger(answer) && answer >= 0 && answer <= 3 ? answer : null;
+    });
+    const grade = gradeExam(questions, answers);
+    const attemptId = `qatt_${uuid.v4()}`;
+    const completedAt = (/* @__PURE__ */ new Date()).toISOString();
+    db2.prepare(`
+      INSERT INTO quiz_attempts
+        (id, quiz_id, session_id, answers, correct_count, total_questions, score, completed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      attemptId,
+      quiz.id,
+      quiz.session_id,
+      JSON.stringify(answers),
+      grade.correctCount,
+      grade.totalQuestions,
+      grade.score,
+      completedAt
+    );
+    const attempt = db2.prepare("SELECT * FROM quiz_attempts WHERE id = ?").get(attemptId);
+    return reviewAttempt(attempt, quiz);
+  });
+  electron.ipcMain.handle("exam:attempt:get", (_event, attemptId) => {
+    const db2 = getDb();
+    const attempt = db2.prepare("SELECT * FROM quiz_attempts WHERE id = ?").get(attemptId);
+    if (!attempt) return null;
+    const quiz = db2.prepare("SELECT * FROM session_quizzes WHERE id = ?").get(attempt.quiz_id);
+    return quiz ? reviewAttempt(attempt, quiz) : null;
+  });
+  electron.ipcMain.handle("exam:history", () => {
+    const rows = getDb().prepare(`
+      SELECT qa.id, qa.quiz_id, qa.session_id, qa.correct_count, qa.total_questions,
+             qa.score, qa.completed_at, s.title as session_title,
+             sq.title as quiz_title, sq.tags
+      FROM quiz_attempts qa
+      JOIN sessions s ON s.id = qa.session_id
+      JOIN session_quizzes sq ON sq.id = qa.quiz_id
+      ORDER BY qa.completed_at DESC
+    `).all();
+    return rows.map((row) => ({ ...row, tags: JSON.parse(row.tags || "[]") }));
+  });
+}
+function clampScore(value) {
+  const n = typeof value === "number" ? value : parseFloat(String(value));
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+async function generateSpeakingQuestions(data) {
+  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const count = Math.max(3, Math.min(15, data.questionCount));
+  const transcript = data.segments.map((segment) => `${segment.position + 1}. ${segment.original}`).join("\n").slice(0, 2e4);
+  const prompt = `You create speaking-practice questions for a Thai learner of English who just studied this clip.
+
+Session title: ${data.sessionTitle}
+Transcript:
+${transcript}
+
+Create exactly ${count} short open-ended questions IN ENGLISH that the learner should answer by speaking 1-3 sentences.
+- Mix question types: about the content of the clip, the learner's opinion of it, and how the topic relates to the learner's own life.
+- Questions must be answerable without seeing the transcript again.
+- Keep each question under 20 words, conversational tone.
+- question_th is a natural Thai translation of the question.
+
+Return ONLY strict JSON, no markdown, no commentary:
+[
+  {"question_en": "...", "question_th": "..."}
+]`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await ollamaGenerate(model, prompt, { temperature: 0.4, num_ctx: 16384 });
+      const parsed = JSON.parse(extractJSON(raw));
+      const questions = parsed.filter((q) => q && typeof q.question_en === "string" && q.question_en.trim().length > 0).slice(0, count).map((q) => ({
+        question_en: q.question_en.trim(),
+        question_th: typeof q.question_th === "string" ? q.question_th.trim() : ""
+      }));
+      if (questions.length === 0) throw new Error("Model returned no questions");
+      return { questions, model };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Speaking question generation attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to generate speaking questions");
+}
+async function evaluateSpeakingAnswer(data) {
+  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const prompt = `You are an English speaking coach for a Thai learner. The learner heard a question and answered by voice; the answer below is a speech-to-text transcript (punctuation may be missing — do not penalize punctuation or capitalization).
+
+Question: ${data.question}
+Learner's spoken answer: ${data.transcript}
+
+Evaluate the answer:
+- Is the sentence grammatically correct and in natural English word order?
+- Does it actually answer the question?
+- score: 0-100 overall (grammar 50%, relevance 30%, naturalness 20%).
+- feedback_th: 1-3 sentences in Thai explaining what was wrong or good (grammar, word order, word choice).
+- corrected_sentence: the learner's own answer with grammar fixed (English). If already correct, repeat it.
+- suggested_answer: one natural example answer a fluent speaker might say (English, 1-2 sentences).
+
+Return ONLY strict JSON, no markdown:
+{
+  "score": 0,
+  "grammar_ok": true,
+  "feedback_th": "...",
+  "corrected_sentence": "...",
+  "suggested_answer": "..."
+}`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 8192 });
+      const parsed = JSON.parse(extractJSON(raw));
+      return {
+        evaluation: {
+          score: clampScore(parsed.score),
+          grammar_ok: Boolean(parsed.grammar_ok),
+          feedback_th: typeof parsed.feedback_th === "string" ? parsed.feedback_th : "",
+          corrected_sentence: typeof parsed.corrected_sentence === "string" ? parsed.corrected_sentence : "",
+          suggested_answer: typeof parsed.suggested_answer === "string" ? parsed.suggested_answer : ""
+        },
+        model
+      };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Speaking answer evaluation attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to evaluate the answer");
+}
+function registerSpeakingHandlers(getWindow2) {
+  electron.ipcMain.handle("speaking:sessions", () => {
+    return getDb().prepare(`
+      SELECT s.id, s.title, s.created_at, s.total_segments,
+             (SELECT COUNT(*) FROM speaking_questions q WHERE q.session_id = s.id) as question_count
+      FROM sessions s
+      WHERE s.completion_percentage >= 100
+      ORDER BY s.created_at DESC
+    `).all();
+  });
+  electron.ipcMain.handle("speaking:generate", async (_event, sessionId, questionCount = 5) => {
+    const db2 = getDb();
+    const win = getWindow2();
+    const session = db2.prepare("SELECT id, title, completion_percentage FROM sessions WHERE id = ?").get(sessionId);
+    if (!session) throw new Error("Session not found");
+    if (session.completion_percentage < 100) throw new Error("Complete the session before speaking practice");
+    win?.webContents.send("speaking:progress", { status: "reading", msg: "Reading the transcript..." });
+    const segments = db2.prepare("SELECT position, original FROM segments WHERE session_id = ? ORDER BY position").all(sessionId);
+    if (segments.length === 0) throw new Error("This session has no transcript");
+    win?.webContents.send("speaking:progress", { status: "generating", msg: "AI is writing speaking questions..." });
+    const { questions, model } = await generateSpeakingQuestions({
+      sessionTitle: session.title,
+      segments,
+      questionCount
+    });
+    const batchId = `sqb_${uuid.v4()}`;
+    const createdAt = (/* @__PURE__ */ new Date()).toISOString();
+    const insert = db2.prepare(`
+      INSERT INTO speaking_questions (id, session_id, question_en, question_th, position, batch_id, model, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const rows = [];
+    const tx = db2.transaction(() => {
+      questions.forEach((q, index) => {
+        const id = `spq_${uuid.v4()}`;
+        insert.run(id, sessionId, q.question_en, q.question_th, index, batchId, model, createdAt);
+        rows.push({
+          id,
+          session_id: sessionId,
+          question_en: q.question_en,
+          question_th: q.question_th,
+          position: index,
+          batch_id: batchId,
+          model,
+          created_at: createdAt
+        });
+      });
+    });
+    tx();
+    win?.webContents.send("speaking:progress", { status: "done", msg: "Questions ready!" });
+    return { batchId, questions: rows };
+  });
+  electron.ipcMain.handle("speaking:transcribe", async (_event, audioPath) => {
+    log.info("Speaking: transcribing answer", audioPath);
+    const result = await transcribeAudio(audioPath);
+    return { transcript: result.text.trim() };
+  });
+  electron.ipcMain.handle("speaking:evaluate", async (_event, questionId, transcript, audioPath) => {
+    const db2 = getDb();
+    const question = db2.prepare("SELECT * FROM speaking_questions WHERE id = ?").get(questionId);
+    if (!question) throw new Error("Question not found");
+    if (!transcript.trim()) throw new Error("Empty answer transcript");
+    const win = getWindow2();
+    win?.webContents.send("speaking:progress", { status: "evaluating", msg: "AI is checking your grammar..." });
+    const { evaluation } = await evaluateSpeakingAnswer({
+      question: question.question_en,
+      transcript: transcript.trim()
+    });
+    const id = `spa_${uuid.v4()}`;
+    db2.prepare(`
+      INSERT INTO speaking_answers
+        (id, question_id, transcript, audio_path, score, grammar_ok, feedback_th, suggested_answer, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      questionId,
+      transcript.trim(),
+      audioPath || null,
+      evaluation.score,
+      evaluation.grammar_ok ? 1 : 0,
+      evaluation.feedback_th,
+      JSON.stringify({ corrected: evaluation.corrected_sentence, suggested: evaluation.suggested_answer }),
+      (/* @__PURE__ */ new Date()).toISOString()
+    );
+    win?.webContents.send("speaking:progress", { status: "done", msg: "Feedback ready!" });
+    return { answerId: id, ...evaluation };
+  });
+  electron.ipcMain.handle("speaking:answers", (_event, questionId) => {
+    return getDb().prepare("SELECT * FROM speaking_answers WHERE question_id = ? ORDER BY created_at DESC").all(questionId);
+  });
+  electron.ipcMain.handle("speaking:history", () => {
+    return getDb().prepare(`
+      SELECT q.id, q.session_id, q.question_en, q.question_th, q.batch_id, q.created_at,
+             s.title as session_title,
+             COUNT(a.id) as answer_count,
+             MAX(a.score) as best_score,
+             (SELECT a2.transcript FROM speaking_answers a2 WHERE a2.question_id = q.id ORDER BY a2.created_at DESC LIMIT 1) as last_transcript
+      FROM speaking_questions q
+      JOIN sessions s ON s.id = q.session_id
+      LEFT JOIN speaking_answers a ON a.question_id = q.id
+      GROUP BY q.id
+      ORDER BY q.created_at DESC, q.position ASC
+    `).all();
+  });
+}
+function registerGrammarHandlers() {
+  electron.ipcMain.handle("grammar:chat", async (_e, grammarId, messages) => {
+    const db2 = getDb();
+    const grammar = db2.prepare("SELECT id, name, pattern, explanation_th, examples FROM grammar_items WHERE id = ?").get(grammarId);
+    if (!grammar) throw new Error("Grammar topic not found");
+    if (messages.filter((m) => m.role === "user").length <= 1) {
+      db2.prepare("UPDATE grammar_items SET review_count = review_count + 1, last_seen_at = ? WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), grammarId);
+    }
+    let examples = "";
+    try {
+      const parsed = JSON.parse(grammar.examples || "[]");
+      examples = parsed.map((ex) => `- ${ex.original}${ex.translate ? ` (${ex.translate})` : ""}`).join("\n");
+    } catch {
+      examples = "";
+    }
+    const system = `You are a friendly English tutor coaching a Thai learner to actively USE this grammar topic in speech:
+
+Topic: ${grammar.name}
+${grammar.pattern ? `Pattern: ${grammar.pattern}` : ""}
+${grammar.explanation_th ? `Thai explanation: ${grammar.explanation_th}` : ""}
+${examples ? `Examples:
+${examples}` : ""}
+
+Coaching rules:
+- Explain briefly in Thai, but all example sentences and challenges are in English.
+- Each turn: give ONE short situation or question that forces the learner to answer in English using this grammar.
+- When the learner answers, first say whether the grammar was used correctly. If wrong, show the corrected sentence and explain the fix in 1-2 Thai sentences. Then give the next challenge.
+- Keep every reply under 130 words. Never answer the challenge for the learner. Do not use markdown tables.`;
+    const model = getSetting("analysis_model") || "qwen3.6:27b";
+    const reply = await ollamaChat(
+      model,
+      [{ role: "system", content: system }, ...messages],
+      { temperature: 0.5, num_ctx: 8192 }
+    );
+    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(), model };
+  });
+}
+const EXPORT_DB_NAME = "daily-speaking-export.db";
+const MANIFEST_NAME = "daily-speaking-manifest.json";
+function run(cmd, args, cwd) {
+  return new Promise((resolve, reject) => {
+    const proc = child_process.spawn(cmd, args, { cwd });
+    let stderr = "";
+    proc.stderr.on("data", (d) => stderr += d.toString());
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} exited ${code}: ${stderr.slice(0, 300)}`));
+    });
+    proc.on("error", (e) => reject(new Error(`Cannot run ${cmd}: ${e.message}`)));
+  });
+}
+async function exportAllData(destZip, onProgress) {
+  const userData = electron.app.getPath("userData");
+  const db2 = getDb();
+  onProgress?.("Snapshotting the database...");
+  const exportDbPath = path.join(userData, EXPORT_DB_NAME);
+  if (fs.existsSync(exportDbPath)) fs.unlinkSync(exportDbPath);
+  await db2.backup(exportDbPath);
+  const manifestPath = path.join(userData, MANIFEST_NAME);
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    app: "daily-speaking",
+    version: electron.app.getVersion(),
+    exported_at: (/* @__PURE__ */ new Date()).toISOString(),
+    platform: process.platform
+  }, null, 2));
+  getMediaDir();
+  getRecordingsDir();
+  getTtsCacheDir();
+  onProgress?.("Compressing database, media, recordings and voice cache...");
+  if (fs.existsSync(destZip)) fs.unlinkSync(destZip);
+  const entries = [EXPORT_DB_NAME, MANIFEST_NAME, "media", "recordings", "tts_cache"].filter((entry) => fs.existsSync(path.join(userData, entry)));
+  await run("zip", ["-r", "-q", destZip, ...entries], userData);
+  fs.unlinkSync(exportDbPath);
+  fs.unlinkSync(manifestPath);
+  const sizeBytes = fs.statSync(destZip).size;
+  log.info("Export complete:", destZip, sizeBytes, "bytes");
+  return { path: destZip, sizeBytes };
+}
+function copyDirInto(srcDir, destDir) {
+  if (!fs.existsSync(srcDir)) return 0;
+  fs.mkdirSync(destDir, { recursive: true });
+  let count = 0;
+  for (const name of fs.readdirSync(srcDir)) {
+    const src = path.join(srcDir, name);
+    const dest = path.join(destDir, name);
+    if (fs.statSync(src).isDirectory()) {
+      count += copyDirInto(src, dest);
+    } else {
+      fs.copyFileSync(src, dest);
+      count += 1;
+    }
+  }
+  return count;
+}
+function rewritePathColumn(table, column, newDir) {
+  const db2 = getDb();
+  const rows = db2.prepare(`SELECT rowid, ${column} as p FROM ${table} WHERE ${column} IS NOT NULL AND ${column} != ''`).all();
+  const update = db2.prepare(`UPDATE ${table} SET ${column} = ? WHERE rowid = ?`);
+  let changed = 0;
+  const tx = db2.transaction(() => {
+    for (const row of rows) {
+      const rewritten = path.join(newDir, path.basename(row.p));
+      if (rewritten !== row.p) {
+        update.run(rewritten, row.rowid);
+        changed += 1;
+      }
+    }
+  });
+  tx();
+  return changed;
+}
+async function importAllData(srcZip, onProgress) {
+  const userData = electron.app.getPath("userData");
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ds-import-"));
+  try {
+    onProgress?.("Unpacking the backup zip...");
+    await run("unzip", ["-o", "-q", srcZip, "-d", tempDir]);
+    const importedDb = path.join(tempDir, EXPORT_DB_NAME);
+    if (!fs.existsSync(importedDb)) {
+      throw new Error("Not a Daily Speaking backup: database file missing from the zip");
+    }
+    const manifestPath = path.join(tempDir, MANIFEST_NAME);
+    if (fs.existsSync(manifestPath)) {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+      if (manifest.app !== "daily-speaking") throw new Error("Not a Daily Speaking backup: wrong manifest");
+    }
+    onProgress?.("Copying media, recordings and voice cache...");
+    let mediaFiles = 0;
+    mediaFiles += copyDirInto(path.join(tempDir, "media"), getMediaDir());
+    mediaFiles += copyDirInto(path.join(tempDir, "recordings"), getRecordingsDir());
+    copyDirInto(path.join(tempDir, "tts_cache"), getTtsCacheDir());
+    onProgress?.("Replacing the local database...");
+    closeDatabase();
+    const dbPath = path.join(userData, "daily-speaking.db");
+    for (const suffix of ["", "-wal", "-shm"]) {
+      const p = dbPath + suffix;
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
+    fs.copyFileSync(importedDb, dbPath);
+    initDatabase();
+    onProgress?.("Relinking media paths for this machine...");
+    rewritePathColumn("sources", "local_media_path", getMediaDir());
+    rewritePathColumn("practice_attempts", "audio_path", getRecordingsDir());
+    rewritePathColumn("speaking_answers", "audio_path", getRecordingsDir());
+    const db2 = getDb();
+    const sessions = db2.prepare("SELECT COUNT(*) as c FROM sessions").get().c;
+    const flashcards = db2.prepare("SELECT COUNT(*) as c FROM flashcards").get().c;
+    log.info("Import complete:", sessions, "sessions,", flashcards, "flashcards,", mediaFiles, "media files");
+    return { sessions, flashcards, mediaFiles };
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+function registerDataHandlers(getWindow2) {
+  electron.ipcMain.handle("data:export", async () => {
+    const win = getWindow2();
+    const stamp = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const result = await electron.dialog.showSaveDialog({
+      title: "Export all Daily Speaking data",
+      defaultPath: `daily-speaking-backup-${stamp}.zip`,
+      filters: [{ name: "Zip archive", extensions: ["zip"] }]
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const send = (msg) => {
+      win?.webContents.send("data:progress", { msg });
+    };
+    try {
+      const exported = await exportAllData(result.filePath, send);
+      return { canceled: false, ...exported };
+    } catch (err) {
+      log.error("Export failed:", err);
+      throw err;
+    }
+  });
+  electron.ipcMain.handle("data:import", async () => {
+    const win = getWindow2();
+    const picked = await electron.dialog.showOpenDialog({
+      title: "Import Daily Speaking backup",
+      filters: [{ name: "Zip archive", extensions: ["zip"] }],
+      properties: ["openFile"]
+    });
+    const srcZip = picked.filePaths[0];
+    if (picked.canceled || !srcZip) return { canceled: true };
+    const confirm = await electron.dialog.showMessageBox({
+      type: "warning",
+      buttons: ["Import and replace", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      message: "Replace all local data?",
+      detail: "Importing a backup replaces the current database (sessions, flashcards, history) on this machine. Media files are merged. This cannot be undone."
+    });
+    if (confirm.response !== 0) return { canceled: true };
+    const send = (msg) => {
+      win?.webContents.send("data:progress", { msg });
+    };
+    try {
+      const imported = await importAllData(srcZip, send);
+      return { canceled: false, ...imported };
+    } catch (err) {
+      log.error("Import failed:", err);
       throw err;
     }
   });
@@ -1540,6 +2327,10 @@ electron.app.whenReady().then(() => {
   registerDashboardHandlers();
   registerSettingsHandlers();
   registerTtsHandlers();
+  registerExamHandlers(getWindow);
+  registerSpeakingHandlers(getWindow);
+  registerGrammarHandlers();
+  registerDataHandlers(getWindow);
   createWindow();
   electron.app.on("activate", () => {
     if (electron.BrowserWindow.getAllWindows().length === 0) createWindow();

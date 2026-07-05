@@ -87,6 +87,15 @@ export default function Sidebar(): JSX.Element {
             )}
           </NavLink>
 
+          <NavLink to="/speaking" className={navClass}>
+            {({ isActive }) => (
+              <>
+                <span className="material-symbols-outlined" style={iconFill(isActive)}>interpreter_mode</span>
+                <span>Speaking Q&A</span>
+              </>
+            )}
+          </NavLink>
+
           <NavLink to="/grammar" className={navClass}>
             {({ isActive }) => (
               <>

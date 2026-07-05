@@ -30,7 +30,7 @@ export function getScriptPath(): string {
     return path.join(process.resourcesPath, 'whisper_transcribe.py')
   }
   // Dev: relative to compiled main/services/whisper.js → ../../resources/
-  return path.join(__dirname, '../../../resources/whisper_transcribe.py')
+  return path.join(__dirname, '../../resources/whisper_transcribe.py')
 }
 
 export async function transcribeAudio(

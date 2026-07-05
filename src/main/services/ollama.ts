@@ -206,7 +206,7 @@ Analyze the session and return ONLY valid JSON with this structure (no markdown,
   }
 }
 
-function extractJSON(text: string): string {
+export function extractJSON(text: string): string {
   // Remove <think>...</think> blocks from qwen models
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim()
   // Find first [ or {

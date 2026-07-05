@@ -38,7 +38,18 @@ interface Window {
       create: (data: Record<string, unknown>) => Promise<{ id: string }>
       exists: (front: string) => Promise<boolean>
       delete: (id: string) => Promise<boolean>
+      deleteMany: (ids: string[]) => Promise<number>
+      update: (id: string, data: Record<string, unknown>) => Promise<boolean>
       stats: () => Promise<unknown>
+    }
+    speaking: {
+      sessions: () => Promise<unknown[]>
+      generate: (sessionId: string, questionCount: number) => Promise<{ batchId: string; questions: import('./types').SpeakingQuestion[] }>
+      transcribe: (audioPath: string) => Promise<{ transcript: string }>
+      evaluate: (questionId: string, transcript: string, audioPath?: string) => Promise<import('./types').SpeakingEvaluationResult>
+      answers: (questionId: string) => Promise<unknown[]>
+      history: () => Promise<unknown[]>
+      onProgress: (cb: (data: { status: string; msg: string }) => void) => () => void
     }
     exam: {
       getForSession: (sessionId: string) => Promise<import('./types').ExamSessionData>
@@ -53,6 +64,7 @@ interface Window {
     }
     grammar: {
       list: () => Promise<unknown[]>
+      chat: (grammarId: string, messages: { role: string; content: string }[]) => Promise<{ reply: string; model: string }>
     }
     vocabulary: {
       list: () => Promise<unknown[]>
@@ -74,6 +86,11 @@ interface Window {
     }
     dialog: {
       openFile: () => Promise<string | null>
+    }
+    data: {
+      exportAll: () => Promise<{ canceled: boolean; path?: string; sizeBytes?: number }>
+      importAll: () => Promise<{ canceled: boolean; sessions?: number; flashcards?: number; mediaFiles?: number }>
+      onProgress: (cb: (data: { msg: string }) => void) => () => void
     }
   }
 }
