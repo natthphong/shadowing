@@ -230,6 +230,42 @@ export interface SpeakingHistoryEntry {
   last_transcript: string | null
 }
 
+export interface GrammarEvaluationResult {
+  attemptId: string
+  score: number
+  grammar_ok: boolean
+  used_target: boolean
+  feedback_th: string
+  corrected_sentence: string
+  suggested_answer: string
+}
+
+export interface GrammarPracticeAttempt {
+  id: string
+  grammar_id: string
+  question: string
+  transcript: string
+  audio_path: string | null
+  score: number
+  grammar_ok: number
+  used_target: number
+  feedback_th: string | null
+  suggested_answer: string | null
+  created_at: string
+  grammar_name?: string
+}
+
+export interface GrammarDailyItem extends GrammarItem {
+  practiced_today: boolean
+}
+
+export interface Paged<T> {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}
+
 export interface SpeakingSessionOption {
   id: string
   title: string

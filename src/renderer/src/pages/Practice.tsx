@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { Session, Segment, PracticeAttempt, ScoreResult } from '../types'
 import { useAppStore } from '../store'
 import { useAutoFitText } from '../hooks/useAutoFitText'
+import { useYouTubePlayer, extractYouTubeId } from '../hooks/useYouTubePlayer'
 
 type SessionWithMeta = Session & {
   source_type?: string
@@ -118,11 +119,15 @@ export default function Practice(): JSX.Element {
   const isYouTube = sourceType === 'youtube'
   const isVideoFile = VIDEO_TYPES.has(sourceType)
   // isPlayableVideo: true when we have an actual video file to show in <video> element.
-  // Covers local video files AND YouTube sessions where the MP4 was successfully downloaded.
+  // Covers local video files AND legacy YouTube sessions with a downloaded MP4.
   const localMedia = session?.local_media_path || ''
+  // Stream mode: YouTube sessions no longer keep media on disk — playback goes
+  // through the YouTube IFrame API instead of an HTMLMediaElement.
+  const useYT = isYouTube && !localMedia
+  const ytVideoId = useYT ? extractYouTubeId(session?.url || '') : ''
   const isPlayableVideo = isVideoFile || (isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia))
   const showVideoPlayer = isYouTube || isVideoFile
-  const canPlayMedia = Boolean(currentSegment && localMedia)
+  const canPlayMedia = Boolean(currentSegment && (localMedia || (useYT && ytVideoId)))
   const canSpeakAI = Boolean(currentSegment?.original)
 
   const getMediaEl = useCallback(
@@ -130,6 +135,45 @@ export default function Practice(): JSX.Element {
       isPlayableVideo ? videoRef.current : audioRef.current,
     [isPlayableVideo]
   )
+
+  // ── YouTube stream player ─────────────────────────────────────────────────
+  const currentIdxRef = useRef(currentIdx)
+  useEffect(() => { currentIdxRef.current = currentIdx }, [currentIdx])
+
+  const onYTTick = useCallback((t: number, state: number) => {
+    const segs = segmentsRef.current
+    const seg = segs[currentIdxRef.current]
+    if (!seg) return
+    const playing = state === 1 || state === 3
+    setIsMediaPlaying(playing)
+
+    const segDur = seg.end_time - seg.start_time
+    if (segDur > 0) {
+      setMediaProgress(Math.max(0, Math.min(100, ((t - seg.start_time) / segDur) * 100)))
+    }
+
+    // Segment boundary — only react while actually playing so a manual pause
+    // at the end doesn't retrigger loop/advance every poll tick.
+    if (state === 1 && t >= seg.end_time) {
+      if (loopingRef.current) {
+        ytRef.current?.seekTo(seg.start_time, true)
+      } else if (autoPlayRef.current) {
+        ytRef.current?.pause()
+        setCurrentIdx((prev) => (prev < segs.length - 1 ? prev + 1 : prev))
+      } else {
+        ytRef.current?.pause()
+        setMediaProgress(100)
+      }
+    }
+  }, [])
+
+  const yt = useYouTubePlayer({
+    videoId: ytVideoId,
+    onTick: useYT ? onYTTick : undefined,
+    onReady: () => yt.setRate(playbackSpeedRef.current)
+  })
+  const ytRef = useRef(yt)
+  useEffect(() => { ytRef.current = yt }, [yt])
 
   // ── Session load + progress restore ──────────────────────────────────────
   useEffect(() => {
@@ -218,8 +262,23 @@ export default function Practice(): JSX.Element {
   // ── Media playback ────────────────────────────────────────────────────────
   const playSegment = useCallback((seg?: Segment) => {
     const s = seg || currentSegment
+    if (!s) return
+
+    // YouTube stream: seek within the embed; the poll tick handles the rest
+    if (useYT) {
+      if (loopReplayTimerRef.current) {
+        clearTimeout(loopReplayTimerRef.current)
+        loopReplayTimerRef.current = null
+      }
+      setMediaProgress(0)
+      ytRef.current?.setRate(playbackSpeedRef.current)
+      ytRef.current?.seekTo(s.start_time, true)
+      setIsMediaPlaying(true)
+      return
+    }
+
     const mediaPath = session?.local_media_path
-    if (!s || !mediaPath) return
+    if (!mediaPath) return
     const el = getMediaEl()
     if (!el) return
 
@@ -287,12 +346,17 @@ export default function Practice(): JSX.Element {
   }, [playSegment])
 
   const pauseMedia = useCallback(() => {
+    if (useYT) {
+      ytRef.current?.pause()
+      setIsMediaPlaying(false)
+      return
+    }
     const el = getMediaEl()
     if (!el) return
     el.pause()
     el.ontimeupdate = null
     setIsMediaPlaying(false)
-  }, [getMediaEl])
+  }, [getMediaEl, useYT])
 
   const handlePlayPause = useCallback(() => {
     if (!canPlayMedia) return
@@ -303,9 +367,13 @@ export default function Practice(): JSX.Element {
   const handlePlaybackRateChange = useCallback((rate: number) => {
     playbackSpeedRef.current = rate
     setPlaybackSpeed(rate)
+    if (useYT) {
+      ytRef.current?.setRate(rate)
+      return
+    }
     const el = getMediaEl()
     if (el) el.playbackRate = rate
-  }, [getMediaEl])
+  }, [getMediaEl, useYT])
 
   const handleToggleLoop = useCallback(() => {
     const next = !loopingRef.current
@@ -645,8 +713,13 @@ export default function Practice(): JSX.Element {
           {/* ── Video player card (YouTube / video file only) ── */}
           {showVideoPlayer && (
             <div className="flex-[0.8] min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md">
-              {isPlayableVideo ? (
-                /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
+              {useYT ? (
+                /* YouTube stream mode: IFrame player driven via the YT API */
+                <div className="absolute inset-0 w-full h-full" data-testid="yt-player">
+                  <div ref={yt.containerRef} className="w-full h-full" />
+                </div>
+              ) : isPlayableVideo ? (
+                /* Actual video element for local .mp4/.mov/etc AND legacy YouTube MP4s */
                 <video
                   ref={videoRef}
                   src={localMedia ? `file://${localMedia}` : undefined}
@@ -660,22 +733,26 @@ export default function Practice(): JSX.Element {
                   ? <img src={session.thumbnail} className="absolute inset-0 w-full h-full object-cover opacity-80" alt={session.title} />
                   : <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" />
               ) : null}
-              <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent">
+              <div className="absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent pointer-events-none">
                 <p className="text-white font-semibold text-sm truncate">{session.title}</p>
               </div>
-              <button
-                onClick={handlePlayPause}
-                disabled={!canPlayMedia}
-                title={canPlayMedia ? 'Play or pause current sentence' : 'No media available for this session'}
-                className="absolute inset-0 flex items-center justify-center group disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform">
-                  <span className="material-symbols-outlined text-white text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>
-                    {isMediaPlaying ? 'pause' : 'play_arrow'}
-                  </span>
-                </div>
-              </button>
-              <div className="absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent">
+              {/* In YT mode the overlay button would block the iframe; keep it
+                  for local media, and rely on the transport controls for YT */}
+              {!useYT && (
+                <button
+                  onClick={handlePlayPause}
+                  disabled={!canPlayMedia}
+                  title={canPlayMedia ? 'Play or pause current sentence' : 'No media available for this session'}
+                  className="absolute inset-0 flex items-center justify-center group disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <div className="w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform">
+                    <span className="material-symbols-outlined text-white text-4xl" style={{ fontVariationSettings: "'FILL' 1" }}>
+                      {isMediaPlaying ? 'pause' : 'play_arrow'}
+                    </span>
+                  </div>
+                </button>
+              )}
+              <div className="absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none">
                 <div className="relative h-1 w-full bg-white/30 rounded-full">
                   <div className="absolute top-0 left-0 h-full bg-primary rounded-full transition-all" style={{ width: `${mediaProgress}%` }} />
                 </div>

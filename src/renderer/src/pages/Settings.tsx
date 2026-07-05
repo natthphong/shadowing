@@ -267,6 +267,18 @@ export default function Settings(): JSX.Element {
               <p className="text-xs text-on-surface-variant">Caps the Due Today review queue so daily reviews stay manageable</p>
             </div>
             <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-on-surface">Daily Grammar Practice Topics</label>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={settings['grammar_daily_count'] || '4'}
+                onChange={(e) => setSettings((s) => ({ ...s, grammar_daily_count: e.target.value }))}
+                className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary w-32 text-sm"
+              />
+              <p className="text-xs text-on-surface-variant">How many grammar topics are randomly picked for Today&rsquo;s Grammar Practice</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
               <label className="text-sm font-semibold text-on-surface">Translation Workers</label>
               <input
                 type="number"

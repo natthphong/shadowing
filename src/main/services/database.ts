@@ -184,6 +184,31 @@ export function initDatabase(): void {
     CREATE INDEX IF NOT EXISTS idx_speaking_questions_session ON speaking_questions(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_speaking_answers_question ON speaking_answers(question_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS embeddings (
+      kind TEXT NOT NULL,
+      ref_id TEXT NOT NULL,
+      vector TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (kind, ref_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS grammar_practice_history (
+      id TEXT PRIMARY KEY,
+      grammar_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      transcript TEXT NOT NULL,
+      audio_path TEXT,
+      score REAL DEFAULT 0,
+      grammar_ok INTEGER DEFAULT 0,
+      used_target INTEGER DEFAULT 0,
+      feedback_th TEXT,
+      suggested_answer TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (grammar_id) REFERENCES grammar_items(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_grammar_practice_grammar ON grammar_practice_history(grammar_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -213,6 +238,7 @@ export function initDatabase(): void {
     INSERT OR IGNORE INTO settings VALUES ('gemini_translate_model', 'gemini-3.1-flash-lite');
     INSERT OR IGNORE INTO settings VALUES ('gemini_tts_model', 'gemini-3.1-flash-tts-preview');
     INSERT OR IGNORE INTO settings VALUES ('gemini_tts_voice', 'Kore');
+    INSERT OR IGNORE INTO settings VALUES ('grammar_daily_count', '4');
   `)
 
   log.info('Database initialized')

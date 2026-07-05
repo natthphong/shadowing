@@ -1,8 +1,9 @@
-import { app, BrowserWindow, shell, dialog } from 'electron'
+import { app, BrowserWindow, shell, dialog, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import log from 'electron-log'
 import { initDatabase } from './services/database'
+import { migrateYoutubeToStream } from './services/migrate'
 import { registerSessionHandlers } from './ipc/sessions'
 import { registerImportHandlers } from './ipc/import'
 import { registerPracticeHandlers } from './ipc/practice'
@@ -63,12 +64,22 @@ function createWindow(): void {
 app.whenReady().then(() => {
   electronApp.setAppUserModelId('com.dailyspeaking.app')
 
+  // The renderer loads from file:// in production, so YouTube embed requests
+  // carry no HTTP Referer and the player refuses to start (error 153).
+  // Inject a stable https referer for youtube.com traffic only.
+  const ytFilter = { urls: ['*://*.youtube.com/*', '*://*.youtube-nocookie.com/*', '*://*.googlevideo.com/*'] }
+  session.defaultSession.webRequest.onBeforeSendHeaders(ytFilter, (details, callback) => {
+    details.requestHeaders['Referer'] = 'https://app.dailyspeaking.local/'
+    callback({ requestHeaders: details.requestHeaders })
+  })
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
 
   try {
     initDatabase()
+    migrateYoutubeToStream()
   } catch (err) {
     log.error('Database init failed:', err)
     dialog.showErrorBox('Database Error', String(err))

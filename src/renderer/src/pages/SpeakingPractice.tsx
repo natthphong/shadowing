@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Pager from '../components/Pager'
 import {
   SpeakingAnswer,
   SpeakingEvaluationResult,
@@ -46,11 +47,19 @@ export default function SpeakingPractice(): JSX.Element {
   // TTS
   const [ttsPlaying, setTtsPlaying] = useState(false)
 
-  // History
+  // History (searchable + paginated)
+  const HISTORY_PAGE_SIZE = 8
   const [history, setHistory] = useState<SpeakingHistoryEntry[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [historyPage, setHistoryPage] = useState(1)
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const historySearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null)
   const [expandedAnswers, setExpandedAnswers] = useState<SpeakingAnswer[]>([])
+
+  // Session picker filter
+  const [sessionFilter, setSessionFilter] = useState('')
 
   useEffect(() => {
     ;(async () => {
@@ -64,16 +73,27 @@ export default function SpeakingPractice(): JSX.Element {
     setProcessingMsg(data.msg)
   }), [])
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (searchQuery: string, pageNum: number) => {
     setHistoryLoading(true)
-    const rows = await window.api.speaking.history()
-    setHistory(rows as SpeakingHistoryEntry[])
+    const result = await window.api.speaking.history({ query: searchQuery, page: pageNum, pageSize: HISTORY_PAGE_SIZE })
+    setHistory(result.items as SpeakingHistoryEntry[])
+    setHistoryTotal(result.total)
     setHistoryLoading(false)
   }, [])
 
   useEffect(() => {
-    if (tab === 'history') void loadHistory()
-  }, [tab, loadHistory])
+    if (tab === 'history') void loadHistory(historyQuery, historyPage)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  const handleHistorySearch = (value: string): void => {
+    setHistoryQuery(value)
+    if (historySearchTimerRef.current) clearTimeout(historySearchTimerRef.current)
+    historySearchTimerRef.current = setTimeout(() => {
+      setHistoryPage(1)
+      void loadHistory(value, 1)
+    }, 450)
+  }
 
   const startQuiz = useCallback(async () => {
     if (!selectedSession) return
@@ -94,6 +114,11 @@ export default function SpeakingPractice(): JSX.Element {
 
   const currentQuestion = questions[currentIdx]
   const currentResult = currentQuestion ? results[currentQuestion.id] : undefined
+
+  const filteredSessions = useMemo(() => {
+    const q = sessionFilter.trim().toLowerCase()
+    return q ? sessions.filter((s) => s.title.toLowerCase().includes(q)) : sessions
+  }, [sessions, sessionFilter])
 
   const playTts = useCallback(async (text: string) => {
     if (!text || ttsPlaying) return
@@ -237,18 +262,35 @@ export default function SpeakingPractice(): JSX.Element {
       <div className="flex-1 overflow-y-auto no-scrollbar p-gutter">
         {tab === 'history' ? (
           /* ── Answer history ─────────────────────────────────────────────── */
-          historyLoading ? (
+          <div className="flex flex-col gap-3 max-w-3xl mx-auto">
+            <label className="flex items-center gap-2 px-4 py-2.5 bg-white border border-outline-variant rounded-xl focus-within:border-primary">
+              <span className="material-symbols-outlined text-secondary text-[18px]">search</span>
+              <input
+                value={historyQuery}
+                onChange={(e) => handleHistorySearch(e.target.value)}
+                placeholder="Search your questions by meaning..."
+                data-testid="speaking-history-search"
+                className="w-full bg-transparent outline-none text-sm"
+              />
+              {historyQuery && (
+                <button onClick={() => handleHistorySearch('')} className="text-secondary hover:text-primary">
+                  <span className="material-symbols-outlined text-[16px]">close</span>
+                </button>
+              )}
+            </label>
+
+          {historyLoading ? (
             <div className="flex items-center justify-center h-40">
               <span className="material-symbols-outlined text-4xl text-secondary animate-spin">refresh</span>
             </div>
           ) : history.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4 text-secondary">
               <span className="material-symbols-outlined text-6xl opacity-30">forum</span>
-              <p className="text-lg">No speaking answers yet</p>
-              <p className="text-sm opacity-60">Answer questions in the Practice tab to build your history</p>
+              <p className="text-lg">{historyQuery ? 'No questions match this search' : 'No speaking answers yet'}</p>
+              {!historyQuery && <p className="text-sm opacity-60">Answer questions in the Practice tab to build your history</p>}
             </div>
           ) : (
-            <div className="flex flex-col gap-3 max-w-3xl mx-auto">
+            <div className="flex flex-col gap-3">
               {history.map((entry) => {
                 const isExpanded = expandedQuestion === entry.id
                 return (
@@ -299,8 +341,15 @@ export default function SpeakingPractice(): JSX.Element {
                   </div>
                 )
               })}
+              <Pager
+                page={historyPage}
+                total={historyTotal}
+                pageSize={HISTORY_PAGE_SIZE}
+                onPage={(p) => { setHistoryPage(p); void loadHistory(historyQuery, p) }}
+              />
             </div>
-          )
+          )}
+          </div>
         ) : step === 'setup' ? (
           /* ── Setup: pick session + count ────────────────────────────────── */
           <div className="max-w-xl mx-auto flex flex-col gap-6 py-8">
@@ -321,8 +370,19 @@ export default function SpeakingPractice(): JSX.Element {
               <>
                 <div className="flex flex-col gap-2">
                   <label className="text-sm font-semibold text-on-surface">Session</label>
+                  {sessions.length > 5 && (
+                    <label className="flex items-center gap-2 px-3 py-2 bg-white border border-outline-variant rounded-xl focus-within:border-primary">
+                      <span className="material-symbols-outlined text-secondary text-[16px]">search</span>
+                      <input
+                        value={sessionFilter}
+                        onChange={(e) => setSessionFilter(e.target.value)}
+                        placeholder="Filter sessions..."
+                        className="w-full bg-transparent outline-none text-sm"
+                      />
+                    </label>
+                  )}
                   <div className="flex flex-col gap-2 max-h-72 overflow-y-auto no-scrollbar">
-                    {sessions.map((s) => (
+                    {filteredSessions.map((s) => (
                       <button
                         key={s.id}
                         onClick={() => setSelectedSession(s.id)}

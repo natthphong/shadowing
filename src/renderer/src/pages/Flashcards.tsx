@@ -34,6 +34,19 @@ function englishSide(card: Flashcard): string {
   return latinCount(card.front) >= latinCount(card.back) ? card.front : card.back
 }
 
+// "Due today" / "Due in 3 days (8 ก.ค.)" / "Overdue 2 days" per card
+function formatDue(nextDueAt?: string | null): { label: string; overdue: boolean } {
+  if (!nextDueAt) return { label: 'Due now', overdue: true }
+  const due = new Date(nextDueAt)
+  const startOfDay = (d: Date): number => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const diffDays = Math.round((startOfDay(due) - startOfDay(new Date())) / 86400000)
+  const dateStr = due.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+  if (diffDays < 0) return { label: `Overdue ${-diffDays} day${-diffDays > 1 ? 's' : ''} (${dateStr})`, overdue: true }
+  if (diffDays === 0) return { label: 'Due today', overdue: true }
+  if (diffDays === 1) return { label: `Due tomorrow (${dateStr})`, overdue: false }
+  return { label: `Due in ${diffDays} days (${dateStr})`, overdue: false }
+}
+
 interface EditorState {
   id: string | null
   type: string
@@ -398,6 +411,10 @@ export default function Flashcards(): JSX.Element {
                         </span>
                       </div>
                       <p className="text-lg font-semibold text-on-surface">{card.front}</p>
+                      <span className={`flex items-center gap-1 text-xs ${formatDue(card.next_due_at).overdue ? 'text-[#f59e0b] font-semibold' : 'text-secondary'}`}>
+                        <span className="material-symbols-outlined text-[14px]">event</span>
+                        {formatDue(card.next_due_at).label}
+                      </span>
                       {expanded && !selectMode ? (
                         <div className="pt-3 border-t border-outline-variant">
                           <p className="text-sm font-semibold text-secondary mb-1">Answer</p>
@@ -436,6 +453,10 @@ export default function Flashcards(): JSX.Element {
           <div className="w-full max-w-lg mx-auto flex flex-col items-center gap-6 py-8">
             <div className="w-full flex justify-between items-center text-sm text-secondary">
               <span>{currentIdx + 1} / {cards.length}</span>
+              <span className={`flex items-center gap-1 text-xs ${formatDue(current.next_due_at).overdue ? 'text-[#f59e0b]' : 'text-secondary'}`}>
+                <span className="material-symbols-outlined text-[14px]">event</span>
+                {formatDue(current.next_due_at).label}
+              </span>
               <span className="capitalize flex items-center gap-1">
                 <span className="material-symbols-outlined text-sm">{typeIcon(current.type)}</span>
                 {current.type.replaceAll('_', ' ')}

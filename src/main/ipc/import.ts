@@ -7,7 +7,7 @@ import log from 'electron-log'
 import { getDb, getMediaDir } from '../services/database'
 import { transcribeAudio, segmentizeTranscript, WhisperSegment } from '../services/whisper'
 import { extractAudio, getMediaDuration } from '../services/ffmpeg'
-import { fetchYtMetadata, downloadYtAudio, downloadYtVideo } from '../services/youtube'
+import { fetchYtMetadata, downloadYtAudio } from '../services/youtube'
 import { bulkTranslateSegments } from '../services/ai'
 import { generateTts } from '../services/tts'
 import { FFMPEG_PATH, CHILD_ENV } from '../services/paths'
@@ -103,30 +103,13 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
       sendProgress(win, 'metadata', 'Fetching YouTube metadata...', 5)
       const meta = await fetchYtMetadata(url)
 
-      // Try video download first (so the player can show actual video).
-      // Fall back to audio-only if the video download fails.
-      let localMediaPath: string
-      let whisperAudioPath: string
-
-      try {
-        sendProgress(win, 'download', 'Downloading video (≤480p)...', 10)
-        const videoPath = await downloadYtVideo(url, mediaDir, (msg) =>
-          sendProgress(win, 'download', msg, 25)
-        )
-        localMediaPath = videoPath
-
-        sendProgress(win, 'extract', 'Extracting audio for transcription...', 30)
-        whisperAudioPath = await extractAudio(videoPath, mediaDir, (msg) =>
-          sendProgress(win, 'extract', msg, 35)
-        )
-      } catch (videoErr) {
-        log.warn('[YouTube import] Video download failed, falling back to audio-only:', videoErr)
-        sendProgress(win, 'download', 'Downloading audio (video unavailable)...', 10)
-        whisperAudioPath = await downloadYtAudio(url, mediaDir, (msg) =>
-          sendProgress(win, 'download', msg, 30)
-        )
-        localMediaPath = whisperAudioPath
-      }
+      // Stream-first strategy: we only download audio for Whisper, then delete
+      // it. Playback uses the YouTube embed (streamed), which keeps the media
+      // folder and export zips small.
+      sendProgress(win, 'download', 'Downloading audio for transcription...', 10)
+      const whisperAudioPath = await downloadYtAudio(url, mediaDir, (msg) =>
+        sendProgress(win, 'download', msg, 25)
+      )
 
       sendProgress(win, 'transcribe', 'Transcribing with Whisper...', 38)
       const whisperResult = await transcribeAudio(whisperAudioPath, (msg) =>
@@ -140,12 +123,19 @@ export function registerImportHandlers(getWindow: () => BrowserWindow | null): v
 
       sendProgress(win, 'saving', 'Saving session...', 90)
 
+      // Transcription is done — the audio served its purpose
+      try {
+        if (fs.existsSync(whisperAudioPath)) fs.unlinkSync(whisperAudioPath)
+      } catch (cleanupErr) {
+        log.warn('Could not delete temp YouTube audio:', cleanupErr)
+      }
+
       const sourceId = `src_${uuidv4()}`
       const sessionId = `ses_${uuidv4()}`
 
       db.prepare(
         'INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(sourceId, 'youtube', meta.title, url, localMediaPath, meta.thumbnail || '', meta.duration || 0, new Date().toISOString())
+      ).run(sourceId, 'youtube', meta.title, url, '', meta.thumbnail || '', meta.duration || 0, new Date().toISOString())
 
       db.prepare(
         'INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)'

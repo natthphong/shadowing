@@ -8949,13 +8949,61 @@ function Dashboard() {
     ] }) })
   ] });
 }
+function Pager({
+  page,
+  total,
+  pageSize,
+  onPage
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) return null;
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-center gap-3 py-2", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        onClick: () => onPage(page - 1),
+        disabled: page <= 1,
+        "aria-label": "Previous page",
+        className: "w-9 h-9 rounded-full border border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "chevron_left" })
+      }
+    ),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-secondary", children: [
+      "Page ",
+      page,
+      " / ",
+      totalPages,
+      " · ",
+      total,
+      " items"
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx(
+      "button",
+      {
+        onClick: () => onPage(page + 1),
+        disabled: page >= totalPages,
+        "aria-label": "Next page",
+        className: "w-9 h-9 rounded-full border border-outline-variant flex items-center justify-center text-secondary hover:bg-surface-container transition-colors disabled:opacity-30",
+        children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "chevron_right" })
+      }
+    )
+  ] });
+}
+const PAGE_SIZE = 8;
 function Sessions() {
   const navigate = useNavigate();
   const [sessions, setSessions] = reactExports.useState([]);
   const [loading, setLoading] = reactExports.useState(true);
-  const load = reactExports.useCallback(async () => {
+  const [query, setQuery] = reactExports.useState("");
+  const [page, setPage] = reactExports.useState(1);
+  const [total, setTotal] = reactExports.useState(0);
+  const [searching, setSearching] = reactExports.useState(false);
+  const searchTimerRef = reactExports.useRef(null);
+  const load = reactExports.useCallback(async (searchQuery, pageNum) => {
     setLoading(true);
-    const data = await window.api.sessions.list();
+    const result = await window.api.sessions.list({ query: searchQuery, page: pageNum, pageSize: PAGE_SIZE });
+    const data = result.items;
+    setTotal(result.total);
     const reconciled = await Promise.all(data.map(async (session) => {
       const saved = localStorage.getItem(`progress_max_${session.id}`) ?? localStorage.getItem(`progress_${session.id}`);
       const savedIndex = saved === null ? -1 : Number.parseInt(saved, 10);
@@ -8970,15 +9018,29 @@ function Sessions() {
     }));
     setSessions(reconciled);
     setLoading(false);
+    setSearching(false);
   }, []);
   reactExports.useEffect(() => {
-    void load();
+    void load("", 1);
   }, [load]);
+  const handleQueryChange = (value) => {
+    setQuery(value);
+    setSearching(true);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    searchTimerRef.current = setTimeout(() => {
+      setPage(1);
+      void load(value, 1);
+    }, 450);
+  };
+  const goToPage = (nextPage) => {
+    setPage(nextPage);
+    void load(query, nextPage);
+  };
   const deleteSession = async (id2, e) => {
     e.stopPropagation();
     if (!confirm("Delete this session?")) return;
     await window.api.sessions.delete(id2);
-    void load();
+    void load(query, page);
   };
   const formatDate2 = (iso) => new Date(iso).toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
   const sourceIcon = (type) => {
@@ -8987,79 +9049,104 @@ function Sessions() {
     return "audio_file";
   };
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-screen overflow-hidden bg-background", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("header", { className: "w-full h-16 flex items-center px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region", children: /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-on-surface no-drag", children: "Sessions" }) }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto no-scrollbar p-gutter", children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : sessions.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center h-full gap-4 text-secondary", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "school" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: "No sessions yet" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: 'Click "New Session" to import content' })
-    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid gap-4 max-w-4xl", children: sessions.map((session) => {
-      const progress = Math.max(0, Math.min(100, session.completion_percentage || 0));
-      const examCount = session.exam_attempt_count || 0;
-      return /* @__PURE__ */ jsxRuntimeExports.jsxs(
-        "div",
-        {
-          onClick: () => navigate(`/practice/${session.id}`),
-          "data-testid": `session-card-${session.id}`,
-          className: "p-5 bg-white rounded-2xl border border-outline-variant hover:border-primary/40 hover:shadow-sm cursor-pointer transition-all flex gap-5 items-start group",
-          children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-16 h-16 rounded-xl bg-primary-fixed flex items-center justify-center shrink-0 overflow-hidden", children: session.thumbnail ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: session.thumbnail, alt: "", className: "w-full h-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary text-3xl", style: { fontVariationSettings: "'FILL' 1" }, children: sourceIcon(session.source_type) }) }),
-            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-4", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex items-center gap-2 flex-wrap", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "font-bold text-on-surface truncate", children: session.title }),
-                  progress >= 100 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-full bg-tertiary-container/20 text-tertiary text-[10px] font-bold uppercase tracking-wide", children: examCount > 0 ? `${examCount} exam${examCount > 1 ? "s" : ""}` : "Exam ready" })
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "button",
-                  {
-                    onClick: (e) => deleteSession(session.id, e),
-                    className: "w-8 h-8 flex items-center justify-center rounded-full hover:bg-error-container text-secondary hover:text-error transition-colors",
-                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: "delete" })
-                  }
-                ) })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-3 mt-1", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", children: formatDate2(session.created_at) }),
-                progress >= 100 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
-                  "button",
-                  {
-                    onClick: (event) => {
-                      event.stopPropagation();
-                      navigate(`/exam/${session.id}`);
-                    },
-                    className: "flex items-center gap-1 px-3 py-1 rounded-lg bg-primary-fixed text-primary text-xs font-bold hover:bg-secondary-container transition-colors",
-                    children: [
-                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[15px]", children: "quiz" }),
-                      examCount > 0 ? "Retake / Review" : "Take Exam"
-                    ]
-                  }
-                )
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between text-xs text-on-surface-variant mb-1", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-                    session.total_segments || 0,
-                    " sentences"
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "w-full h-16 flex items-center justify-between gap-4 px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-on-surface no-drag", children: "Sessions" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-secondary no-drag", children: [
+        total,
+        " sessions"
+      ] })
+    ] }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 overflow-y-auto no-scrollbar p-gutter", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "max-w-4xl mb-5 flex items-center gap-2 px-4 py-2.5 bg-white border border-outline-variant rounded-xl focus-within:border-primary", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-secondary text-[18px]", children: searching ? "hourglass_empty" : "search" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "input",
+          {
+            value: query,
+            onChange: (e) => handleQueryChange(e.target.value),
+            placeholder: "Search sessions by meaning — e.g. 'email etiquette' or 'running and bad days'",
+            "data-testid": "session-search",
+            className: "w-full bg-transparent outline-none text-sm"
+          }
+        ),
+        query && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => handleQueryChange(""), className: "text-secondary hover:text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "close" }) })
+      ] }),
+      loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-64", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : sessions.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center h-64 gap-4 text-secondary", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "school" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: query ? "No sessions match this search" : "No sessions yet" }),
+        !query && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: 'Click "New Session" to import content' })
+      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid gap-4 max-w-4xl", children: [
+        sessions.map((session) => {
+          const progress = Math.max(0, Math.min(100, session.completion_percentage || 0));
+          const examCount = session.exam_attempt_count || 0;
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "div",
+            {
+              onClick: () => navigate(`/practice/${session.id}`),
+              "data-testid": `session-card-${session.id}`,
+              className: "p-5 bg-white rounded-2xl border border-outline-variant hover:border-primary/40 hover:shadow-sm cursor-pointer transition-all flex gap-5 items-start group",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-16 h-16 rounded-xl bg-primary-fixed flex items-center justify-center shrink-0 overflow-hidden", children: session.thumbnail ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: session.thumbnail, alt: "", className: "w-full h-full object-cover" }) : /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary text-3xl", style: { fontVariationSettings: "'FILL' 1" }, children: sourceIcon(session.source_type) }) }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-start justify-between gap-4", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex items-center gap-2 flex-wrap", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "font-bold text-on-surface truncate", children: session.title }),
+                      progress >= 100 && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "px-2 py-0.5 rounded-full bg-tertiary-container/20 text-tertiary text-[10px] font-bold uppercase tracking-wide", children: examCount > 0 ? `${examCount} exam${examCount > 1 ? "s" : ""}` : "Exam ready" })
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "button",
+                      {
+                        onClick: (e) => deleteSession(session.id, e),
+                        className: "w-8 h-8 flex items-center justify-center rounded-full hover:bg-error-container text-secondary hover:text-error transition-colors",
+                        children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: "delete" })
+                      }
+                    ) })
                   ] }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
-                    Math.round(progress),
-                    "% complete"
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between gap-3 mt-1", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", children: formatDate2(session.created_at) }),
+                    progress >= 100 && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                      "button",
+                      {
+                        onClick: (event) => {
+                          event.stopPropagation();
+                          navigate(`/exam/${session.id}`);
+                        },
+                        className: "flex items-center gap-1 px-3 py-1 rounded-lg bg-primary-fixed text-primary text-xs font-bold hover:bg-secondary-container transition-colors",
+                        children: [
+                          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[15px]", children: "quiz" }),
+                          examCount > 0 ? "Retake / Review" : "Take Exam"
+                        ]
+                      }
+                    )
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mt-3", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex justify-between text-xs text-on-surface-variant mb-1", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                        session.total_segments || 0,
+                        " sentences"
+                      ] }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { children: [
+                        Math.round(progress),
+                        "% complete"
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-1.5 bg-surface-container rounded-full overflow-hidden", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "div",
+                      {
+                        className: "h-full bg-primary rounded-full",
+                        style: { width: `${progress}%` }
+                      }
+                    ) })
                   ] })
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "h-1.5 bg-surface-container rounded-full overflow-hidden", children: /* @__PURE__ */ jsxRuntimeExports.jsx(
-                  "div",
-                  {
-                    className: "h-full bg-primary rounded-full",
-                    style: { width: `${progress}%` }
-                  }
-                ) })
-              ] })
-            ] })
-          ]
-        },
-        session.id
-      );
-    }) }) })
+                ] })
+              ]
+            },
+            session.id
+          );
+        }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(Pager, { page, total, pageSize: PAGE_SIZE, onPage: goToPage })
+      ] })
+    ] })
   ] });
 }
 const __vite_import_meta_env__$1 = {};
@@ -9380,6 +9467,164 @@ function useAutoFitText(ref, text, {
     };
   }, [minPx, maxPx, ref]);
 }
+const SCRIPT_ID = "yt-iframe-api";
+function loadYouTubeAPI() {
+  if (window.YT?.Player) return Promise.resolve(window.YT);
+  return new Promise((resolve) => {
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      try {
+        prev?.();
+      } catch {
+      }
+      resolve(window.YT);
+    };
+    if (!document.getElementById(SCRIPT_ID)) {
+      const script = document.createElement("script");
+      script.id = SCRIPT_ID;
+      script.src = "https://www.youtube.com/iframe_api";
+      script.async = true;
+      document.body.appendChild(script);
+    }
+  });
+}
+function extractYouTubeId(url) {
+  const patterns = [
+    /(?:youtube\.com\/watch\?.*v=)([\w-]{11})/,
+    /(?:youtu\.be\/)([\w-]{11})/,
+    /(?:youtube\.com\/shorts\/)([\w-]{11})/,
+    /(?:youtube\.com\/embed\/)([\w-]{11})/
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(url);
+    if (match) return match[1];
+  }
+  return "";
+}
+function useYouTubePlayer({ videoId, onTick, onReady, onStateChange, pollMs = 250 }) {
+  const playerRef = reactExports.useRef(null);
+  const readyRef = reactExports.useRef(false);
+  const containerElRef = reactExports.useRef(null);
+  const onTickRef = reactExports.useRef(onTick);
+  const onReadyRef = reactExports.useRef(onReady);
+  const onStateChangeRef = reactExports.useRef(onStateChange);
+  const pendingSeekRef = reactExports.useRef(null);
+  onTickRef.current = onTick;
+  onReadyRef.current = onReady;
+  onStateChangeRef.current = onStateChange;
+  reactExports.useEffect(() => {
+    if (!videoId) return;
+    let cancelled = false;
+    const mount = async () => {
+      const YT = await loadYouTubeAPI();
+      if (cancelled || !containerElRef.current) return;
+      try {
+        playerRef.current?.destroy?.();
+      } catch {
+      }
+      readyRef.current = false;
+      playerRef.current = new YT.Player(containerElRef.current, {
+        width: "100%",
+        height: "100%",
+        videoId,
+        playerVars: {
+          modestbranding: 1,
+          rel: 0,
+          playsinline: 1,
+          enablejsapi: 1,
+          controls: 0,
+          disablekb: 1
+        },
+        events: {
+          onReady: () => {
+            readyRef.current = true;
+            onReadyRef.current?.();
+            const pending = pendingSeekRef.current;
+            if (pending) {
+              pendingSeekRef.current = null;
+              try {
+                playerRef.current?.seekTo?.(pending.t, true);
+                if (pending.autoPlay) playerRef.current?.playVideo?.();
+              } catch {
+              }
+            }
+          },
+          onStateChange: (event) => {
+            onStateChangeRef.current?.(event.data);
+          }
+        }
+      });
+    };
+    void mount();
+    return () => {
+      cancelled = true;
+      try {
+        playerRef.current?.destroy?.();
+      } catch {
+      }
+      playerRef.current = null;
+      readyRef.current = false;
+    };
+  }, [videoId]);
+  reactExports.useEffect(() => {
+    if (!onTick) return;
+    const interval = setInterval(() => {
+      if (!readyRef.current || !playerRef.current) return;
+      try {
+        const t2 = playerRef.current.getCurrentTime?.() ?? 0;
+        const state = playerRef.current.getPlayerState?.() ?? -1;
+        onTickRef.current?.(t2, state);
+      } catch {
+      }
+    }, pollMs);
+    return () => clearInterval(interval);
+  }, [onTick, pollMs]);
+  const setContainer = reactExports.useCallback((el2) => {
+    containerElRef.current = el2;
+  }, []);
+  const isReady = reactExports.useCallback(() => readyRef.current, []);
+  const play = reactExports.useCallback(() => {
+    if (readyRef.current) playerRef.current?.playVideo?.();
+  }, []);
+  const pause = reactExports.useCallback(() => {
+    if (readyRef.current) playerRef.current?.pauseVideo?.();
+  }, []);
+  const seekTo = reactExports.useCallback((t2, autoPlay = true) => {
+    if (!readyRef.current) {
+      pendingSeekRef.current = { t: t2, autoPlay };
+      return;
+    }
+    try {
+      playerRef.current?.seekTo?.(t2, true);
+      if (autoPlay) playerRef.current?.playVideo?.();
+    } catch {
+    }
+  }, []);
+  const setRate = reactExports.useCallback((rate) => {
+    if (readyRef.current) {
+      try {
+        playerRef.current?.setPlaybackRate?.(rate);
+      } catch {
+      }
+    }
+  }, []);
+  const getCurrentTime = reactExports.useCallback(() => {
+    try {
+      return readyRef.current ? playerRef.current?.getCurrentTime?.() ?? 0 : 0;
+    } catch {
+      return 0;
+    }
+  }, []);
+  const isPlaying = reactExports.useCallback(() => {
+    try {
+      const state = readyRef.current ? playerRef.current?.getPlayerState?.() ?? -1 : -1;
+      return state === 1 || state === 3;
+    } catch {
+      return false;
+    }
+  }, []);
+  return { containerRef: setContainer, isReady, play, pause, seekTo, setRate, getCurrentTime, isPlaying };
+}
 const VIDEO_TYPES = /* @__PURE__ */ new Set(["mp4", "mov", "mkv", "avi", "webm"]);
 function Practice() {
   const { sessionId } = useParams();
@@ -9460,14 +9705,51 @@ function Practice() {
   const isYouTube = sourceType === "youtube";
   const isVideoFile = VIDEO_TYPES.has(sourceType);
   const localMedia = session?.local_media_path || "";
+  const useYT = isYouTube && !localMedia;
+  const ytVideoId = useYT ? extractYouTubeId(session?.url || "") : "";
   const isPlayableVideo = isVideoFile || isYouTube && /\.(mp4|mov|mkv|webm)$/i.test(localMedia);
   const showVideoPlayer = isYouTube || isVideoFile;
-  const canPlayMedia = Boolean(currentSegment && localMedia);
+  const canPlayMedia = Boolean(currentSegment && (localMedia || useYT && ytVideoId));
   const canSpeakAI = Boolean(currentSegment?.original);
   const getMediaEl = reactExports.useCallback(
     () => isPlayableVideo ? videoRef.current : audioRef.current,
     [isPlayableVideo]
   );
+  const currentIdxRef = reactExports.useRef(currentIdx);
+  reactExports.useEffect(() => {
+    currentIdxRef.current = currentIdx;
+  }, [currentIdx]);
+  const onYTTick = reactExports.useCallback((t2, state) => {
+    const segs = segmentsRef.current;
+    const seg = segs[currentIdxRef.current];
+    if (!seg) return;
+    const playing = state === 1 || state === 3;
+    setIsMediaPlaying(playing);
+    const segDur = seg.end_time - seg.start_time;
+    if (segDur > 0) {
+      setMediaProgress(Math.max(0, Math.min(100, (t2 - seg.start_time) / segDur * 100)));
+    }
+    if (state === 1 && t2 >= seg.end_time) {
+      if (loopingRef.current) {
+        ytRef.current?.seekTo(seg.start_time, true);
+      } else if (autoPlayRef.current) {
+        ytRef.current?.pause();
+        setCurrentIdx((prev) => prev < segs.length - 1 ? prev + 1 : prev);
+      } else {
+        ytRef.current?.pause();
+        setMediaProgress(100);
+      }
+    }
+  }, []);
+  const yt = useYouTubePlayer({
+    videoId: ytVideoId,
+    onTick: useYT ? onYTTick : void 0,
+    onReady: () => yt.setRate(playbackSpeedRef.current)
+  });
+  const ytRef = reactExports.useRef(yt);
+  reactExports.useEffect(() => {
+    ytRef.current = yt;
+  }, [yt]);
   reactExports.useEffect(() => {
     if (!sessionId) return;
     (async () => {
@@ -9548,8 +9830,20 @@ function Practice() {
   }, []);
   const playSegment = reactExports.useCallback((seg) => {
     const s = seg || currentSegment;
+    if (!s) return;
+    if (useYT) {
+      if (loopReplayTimerRef.current) {
+        clearTimeout(loopReplayTimerRef.current);
+        loopReplayTimerRef.current = null;
+      }
+      setMediaProgress(0);
+      ytRef.current?.setRate(playbackSpeedRef.current);
+      ytRef.current?.seekTo(s.start_time, true);
+      setIsMediaPlaying(true);
+      return;
+    }
     const mediaPath = session?.local_media_path;
-    if (!s || !mediaPath) return;
+    if (!mediaPath) return;
     const el2 = getMediaEl();
     if (!el2) return;
     if (loopReplayTimerRef.current) {
@@ -9601,12 +9895,17 @@ function Practice() {
     playSegmentRef.current = playSegment;
   }, [playSegment]);
   const pauseMedia = reactExports.useCallback(() => {
+    if (useYT) {
+      ytRef.current?.pause();
+      setIsMediaPlaying(false);
+      return;
+    }
     const el2 = getMediaEl();
     if (!el2) return;
     el2.pause();
     el2.ontimeupdate = null;
     setIsMediaPlaying(false);
-  }, [getMediaEl]);
+  }, [getMediaEl, useYT]);
   const handlePlayPause = reactExports.useCallback(() => {
     if (!canPlayMedia) return;
     if (isMediaPlaying) pauseMedia();
@@ -9615,9 +9914,13 @@ function Practice() {
   const handlePlaybackRateChange = reactExports.useCallback((rate) => {
     playbackSpeedRef.current = rate;
     setPlaybackSpeed(rate);
+    if (useYT) {
+      ytRef.current?.setRate(rate);
+      return;
+    }
     const el2 = getMediaEl();
     if (el2) el2.playbackRate = rate;
-  }, [getMediaEl]);
+  }, [getMediaEl, useYT]);
   const handleToggleLoop = reactExports.useCallback(() => {
     const next = !loopingRef.current;
     loopingRef.current = next;
@@ -9913,8 +10216,11 @@ function Practice() {
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-1 min-h-0 overflow-hidden", children: [
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-[3] min-w-0 flex flex-col overflow-hidden p-gutter gap-4 pb-20", children: [
         showVideoPlayer && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-[0.8] min-h-0 relative rounded-2xl overflow-hidden bg-on-surface shadow-md", children: [
-          isPlayableVideo ? (
-            /* Actual video element for local .mp4/.mov/etc AND YouTube with downloaded MP4 */
+          useYT ? (
+            /* YouTube stream mode: IFrame player driven via the YT API */
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 w-full h-full", "data-testid": "yt-player", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { ref: yt.containerRef, className: "w-full h-full" }) })
+          ) : isPlayableVideo ? (
+            /* Actual video element for local .mp4/.mov/etc AND legacy YouTube MP4s */
             /* @__PURE__ */ jsxRuntimeExports.jsx(
               "video",
               {
@@ -9929,8 +10235,8 @@ function Practice() {
             /* YouTube audio-only fallback: show thumbnail */
             session.thumbnail ? /* @__PURE__ */ jsxRuntimeExports.jsx("img", { src: session.thumbnail, className: "absolute inset-0 w-full h-full object-cover opacity-80", alt: session.title }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 bg-gradient-to-br from-primary/20 to-secondary/20" })
           ) : null,
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-white font-semibold text-sm truncate", children: session.title }) }),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 right-0 p-3 bg-gradient-to-b from-black/60 to-transparent pointer-events-none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-white font-semibold text-sm truncate", children: session.title }) }),
+          !useYT && /* @__PURE__ */ jsxRuntimeExports.jsx(
             "button",
             {
               onClick: handlePlayPause,
@@ -9940,7 +10246,7 @@ function Practice() {
               children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-14 h-14 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center hover:scale-110 transition-transform", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-white text-4xl", style: { fontVariationSettings: "'FILL' 1" }, children: isMediaPlaying ? "pause" : "play_arrow" }) })
             }
           ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 w-full bg-white/30 rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 h-full bg-primary rounded-full transition-all", style: { width: `${mediaProgress}%` } }) }) })
+          /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute bottom-0 left-0 right-0 px-4 pb-2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "relative h-1 w-full bg-white/30 rounded-full", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-0 left-0 h-full bg-primary rounded-full transition-all", style: { width: `${mediaProgress}%` } }) }) })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "flex-[1.2] min-w-0 min-h-0 flex flex-col bg-surface-container-lowest rounded-3xl border border-outline-variant shadow-sm overflow-hidden", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 flex flex-col items-center gap-2 pt-4 px-6", children: [
@@ -10374,6 +10680,17 @@ function englishSide(card) {
   const latinCount = (s) => (s.match(/[a-zA-Z]/g) || []).length;
   return latinCount(card.front) >= latinCount(card.back) ? card.front : card.back;
 }
+function formatDue(nextDueAt) {
+  if (!nextDueAt) return { label: "Due now", overdue: true };
+  const due = new Date(nextDueAt);
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(due) - startOfDay(/* @__PURE__ */ new Date())) / 864e5);
+  const dateStr = due.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
+  if (diffDays < 0) return { label: `Overdue ${-diffDays} day${-diffDays > 1 ? "s" : ""} (${dateStr})`, overdue: true };
+  if (diffDays === 0) return { label: "Due today", overdue: true };
+  if (diffDays === 1) return { label: `Due tomorrow (${dateStr})`, overdue: false };
+  return { label: `Due in ${diffDays} days (${dateStr})`, overdue: false };
+}
 const emptyEditor = { id: null, type: "vocabulary", front: "", back: "" };
 function Flashcards() {
   const [viewMode, setViewMode] = reactExports.useState("due");
@@ -10734,6 +11051,10 @@ function Flashcards() {
                 ] })
               ] }),
               /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg font-semibold text-on-surface", children: card.front }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `flex items-center gap-1 text-xs ${formatDue(card.next_due_at).overdue ? "text-[#f59e0b] font-semibold" : "text-secondary"}`, children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", children: "event" }),
+                formatDue(card.next_due_at).label
+              ] }),
               expanded && !selectMode ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "pt-3 border-t border-outline-variant", children: [
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-secondary mb-1", children: "Answer" }),
                 /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-on-surface-variant whitespace-pre-wrap", children: card.back })
@@ -10769,6 +11090,10 @@ function Flashcards() {
           currentIdx + 1,
           " / ",
           cards.length
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `flex items-center gap-1 text-xs ${formatDue(current.next_due_at).overdue ? "text-[#f59e0b]" : "text-secondary"}`, children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", children: "event" }),
+          formatDue(current.next_due_at).label
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "capitalize flex items-center gap-1", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-sm", children: typeIcon(current.type) }),
@@ -10946,49 +11271,57 @@ function Flashcards() {
     ] }) })
   ] });
 }
-const BOOTSTRAP = "I'm ready. Please introduce this grammar briefly and give me the first challenge.";
-function GrammarPracticeChat({
+function GrammarSpeakPractice({
   grammar,
   onClose
 }) {
-  const [messages, setMessages] = reactExports.useState([]);
-  const [input, setInput] = reactExports.useState("");
-  const [thinking, setThinking] = reactExports.useState(false);
+  const [question, setQuestion] = reactExports.useState(null);
+  const [loadingQuestion, setLoadingQuestion] = reactExports.useState(true);
+  const [showTranslate, setShowTranslate] = reactExports.useState(false);
+  const [result, setResult] = reactExports.useState(null);
+  const [history, setHistory] = reactExports.useState([]);
   const [isRecording, setIsRecording] = reactExports.useState(false);
-  const [transcribing, setTranscribing] = reactExports.useState(false);
+  const [processing, setProcessing] = reactExports.useState(false);
+  const [processingMsg, setProcessingMsg] = reactExports.useState("");
   const [ttsPlaying, setTtsPlaying] = reactExports.useState(false);
+  const [error, setError] = reactExports.useState("");
   const mediaRecorderRef = reactExports.useRef(null);
   const chunksRef = reactExports.useRef([]);
-  const scrollRef = reactExports.useRef(null);
-  const startedRef = reactExports.useRef(false);
-  const send = reactExports.useCallback(async (history) => {
-    setThinking(true);
+  const loadHistory = reactExports.useCallback(async () => {
+    const rows = await window.api.grammar.practiceHistory(grammar.id);
+    setHistory(rows);
+  }, [grammar.id]);
+  const loadQuestion = reactExports.useCallback(async () => {
+    setLoadingQuestion(true);
+    setResult(null);
+    setShowTranslate(false);
+    setError("");
     try {
-      const payload = history.map(({ role, content }) => ({ role, content }));
-      const { reply } = await window.api.grammar.chat(grammar.id, payload);
-      setMessages([...history, { role: "assistant", content: reply }]);
+      const q2 = await window.api.grammar.practiceQuestion(grammar.id);
+      setQuestion(q2);
     } catch (e) {
-      setMessages([...history, { role: "assistant", content: "ขออภัย เกิดข้อผิดพลาดในการเชื่อมต่อ AI: " + String(e) }]);
+      setError("Could not generate a challenge: " + String(e));
     } finally {
-      setThinking(false);
+      setLoadingQuestion(false);
     }
   }, [grammar.id]);
   reactExports.useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    void send([{ role: "user", content: BOOTSTRAP, hidden: true }]);
-  }, [send]);
-  reactExports.useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-  }, [messages, thinking]);
-  const handleSend = reactExports.useCallback(() => {
-    const text = input.trim();
-    if (!text || thinking) return;
-    setInput("");
-    const next = [...messages, { role: "user", content: text }];
-    setMessages(next);
-    void send(next);
-  }, [input, messages, send, thinking]);
+    void loadQuestion();
+    void loadHistory();
+  }, [loadQuestion, loadHistory]);
+  const playTts = reactExports.useCallback(async (text) => {
+    if (!text || ttsPlaying) return;
+    setTtsPlaying(true);
+    try {
+      const r2 = await window.api.tts.speak(text);
+      const audio = new Audio(`file://${r2.path}`);
+      audio.onended = () => setTtsPlaying(false);
+      audio.onerror = () => setTtsPlaying(false);
+      await audio.play();
+    } catch {
+      setTtsPlaying(false);
+    }
+  }, [ttsPlaying]);
   const startRecording = reactExports.useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -11008,13 +11341,17 @@ function GrammarPracticeChat({
     }
   }, []);
   const stopRecording = reactExports.useCallback(async () => {
-    if (!mediaRecorderRef.current) return;
+    if (!mediaRecorderRef.current || !question) return;
     mediaRecorderRef.current.stop();
     setIsRecording(false);
     await new Promise((resolve) => setTimeout(resolve, 400));
     const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-    if (blob.size === 0) return;
-    setTranscribing(true);
+    if (blob.size === 0) {
+      alert("Recording is empty — please try again.");
+      return;
+    }
+    setProcessing(true);
+    setProcessingMsg("Transcribing your answer...");
     try {
       const arrayBuffer = await blob.arrayBuffer();
       const uint8 = new Uint8Array(arrayBuffer);
@@ -11025,35 +11362,37 @@ function GrammarPracticeChat({
       base64 = btoa(base64);
       const recPath = await window.api.recording.save(base64, `grammar_${Date.now()}.webm`);
       const { transcript } = await window.api.speaking.transcribe(recPath);
-      setInput((prev) => prev ? `${prev} ${transcript}` : transcript);
+      if (!transcript.trim()) {
+        alert("Could not hear anything — please try again.");
+        return;
+      }
+      setProcessingMsg("AI is checking your grammar...");
+      const evaluation = await window.api.grammar.practiceEvaluate(
+        grammar.id,
+        question.question_en,
+        transcript,
+        recPath
+      );
+      setResult(evaluation);
+      await loadHistory();
     } catch (e) {
-      alert("Transcription error: " + String(e));
+      alert("Evaluation error: " + String(e));
     } finally {
-      setTranscribing(false);
+      setProcessing(false);
     }
-  }, []);
-  const playTts = reactExports.useCallback(async (text) => {
-    const english = (text.match(/[A-Za-z][A-Za-z0-9' ,.!?-]*/g) || []).map((s) => s.trim()).filter((s) => s.split(/\s+/).length >= 3).join(". ");
-    const target = english || text;
-    if (!target || ttsPlaying) return;
-    setTtsPlaying(true);
-    try {
-      const result = await window.api.tts.speak(target);
-      const audio = new Audio(`file://${result.path}`);
-      audio.onended = () => setTtsPlaying(false);
-      audio.onerror = () => setTtsPlaying(false);
-      await audio.play();
-    } catch {
-      setTtsPlaying(false);
-    }
-  }, [ttsPlaying]);
-  const visibleMessages = messages.filter((m2) => !m2.hidden);
+  }, [grammar.id, question, loadHistory]);
+  const handleRecord = reactExports.useCallback(() => {
+    if (processing) return;
+    if (isRecording) void stopRecording();
+    else void startRecording();
+  }, [isRecording, processing, startRecording, stopRecording]);
+  const scoreColor = (score) => score >= 85 ? "text-tertiary" : score >= 65 ? "text-[#f59e0b]" : "text-error";
   return /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-sm", onClick: onClose, children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
     "div",
     {
-      className: "w-[680px] max-w-[calc(100vw-2rem)] h-[80vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden",
+      className: "w-[720px] max-w-[calc(100vw-2rem)] h-[85vh] bg-white rounded-3xl shadow-2xl flex flex-col overflow-hidden",
       onClick: (e) => e.stopPropagation(),
-      "data-testid": "grammar-chat",
+      "data-testid": "grammar-practice-modal",
       children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-5 border-b border-outline-variant flex items-center gap-3 shrink-0", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "w-10 h-10 rounded-lg bg-primary-fixed flex items-center justify-center shrink-0", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary", style: { fontVariationSettings: "'FILL' 1" }, children: "school" }) }),
@@ -11066,86 +11405,242 @@ function GrammarPracticeChat({
           ] }),
           /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: onClose, className: "text-secondary hover:text-primary shrink-0", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "close" }) })
         ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { ref: scrollRef, className: "flex-1 overflow-y-auto p-5 flex flex-col gap-3 no-scrollbar bg-background", children: [
-          visibleMessages.length === 0 && thinking && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-secondary text-sm py-8 justify-center", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[18px]", children: "progress_activity" }),
-            "AI tutor is preparing your first challenge..."
-          ] }),
-          visibleMessages.map((msg, index) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: `flex ${msg.role === "user" ? "justify-end" : "justify-start"}`, children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: `max-w-[80%] p-3.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${msg.role === "user" ? "bg-primary text-on-primary rounded-br-md" : "bg-white border border-outline-variant text-on-surface rounded-bl-md"}`, children: [
-            msg.content,
-            msg.role === "assistant" && /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 overflow-y-auto no-scrollbar p-6 flex flex-col gap-5 bg-background", children: [
+          loadingQuestion ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-center gap-2 py-14 text-secondary", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[20px]", children: "progress_activity" }),
+            "AI is writing a challenge for this grammar..."
+          ] }) : error ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-5 bg-error-container/20 rounded-2xl text-error text-sm", children: [
+            error,
+            /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => void loadQuestion(), className: "block mt-2 font-bold underline", children: "Retry" })
+          ] }) : question ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-white rounded-3xl border border-outline-variant shadow-sm p-6 flex flex-col items-center gap-4", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-label-sm text-secondary uppercase tracking-wider", children: "Speak using this grammar" }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xl font-medium text-on-surface text-center leading-relaxed", "data-testid": "grammar-question", children: question.question_en }),
+            showTranslate && question.question_th && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-on-surface-variant italic text-center", children: question.question_th }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => void playTts(question.question_en),
+                  disabled: ttsPlaying,
+                  className: `flex items-center gap-1.5 px-4 py-2 rounded-full border-2 text-sm font-semibold transition-all ${ttsPlaying ? "border-tertiary bg-tertiary-container text-tertiary animate-pulse" : "border-outline-variant text-secondary hover:bg-surface-container"} disabled:opacity-60`,
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", style: { fontVariationSettings: "'FILL' 1" }, children: "volume_up" }),
+                    "Listen"
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => setShowTranslate((v2) => !v2),
+                  "aria-pressed": showTranslate,
+                  className: `flex items-center gap-1.5 px-4 py-2 rounded-full border-2 text-sm font-semibold transition-colors ${showTranslate ? "border-primary bg-secondary-container text-primary" : "border-outline-variant text-secondary hover:bg-surface-container"}`,
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "translate" }),
+                    "Translate"
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => void loadQuestion(),
+                  disabled: processing || isRecording,
+                  title: "New challenge",
+                  className: "flex items-center gap-1.5 px-4 py-2 rounded-full border-2 border-outline-variant text-sm font-semibold text-secondary hover:bg-surface-container transition-colors disabled:opacity-50",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "casino" }),
+                    "New"
+                  ]
+                }
+              )
+            ] })
+          ] }) : null,
+          question && !result && !loadingQuestion && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-3", children: [
+            isRecording ? /* @__PURE__ */ jsxRuntimeExports.jsxs(
               "button",
               {
-                onClick: () => void playTts(msg.content),
-                disabled: ttsPlaying,
-                title: "Listen to the English parts",
-                className: "mt-2 flex items-center gap-1 text-xs text-secondary hover:text-primary transition-colors disabled:opacity-50",
+                onClick: handleRecord,
+                "data-testid": "grammar-record",
+                className: "px-8 py-3.5 bg-error text-on-error rounded-full flex items-center gap-2 shadow-md recording-active font-bold",
                 children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[14px]", style: { fontVariationSettings: "'FILL' 1" }, children: "volume_up" }),
-                  "Listen"
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: "stop" }),
+                  "Stop & Check"
                 ]
               }
-            )
-          ] }) }, index)),
-          thinking && visibleMessages.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex justify-start", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3.5 rounded-2xl rounded-bl-md bg-white border border-outline-variant flex items-center gap-2 text-secondary text-sm", children: [
-            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[16px]", children: "progress_activity" }),
-            "Thinking..."
-          ] }) })
-        ] }),
-        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-4 border-t border-outline-variant shrink-0 flex items-end gap-2", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              onClick: () => isRecording ? void stopRecording() : void startRecording(),
-              disabled: transcribing || thinking,
-              title: isRecording ? "Stop recording" : "Answer by voice",
-              className: `w-11 h-11 rounded-full flex items-center justify-center shrink-0 transition-all ${isRecording ? "bg-error text-on-error recording-active" : "bg-surface-container text-secondary hover:text-primary"} disabled:opacity-50`,
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: "'FILL' 1" }, children: isRecording ? "stop" : transcribing ? "hourglass_empty" : "mic" })
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "textarea",
-            {
-              value: input,
-              onChange: (e) => setInput(e.target.value),
-              onKeyDown: (e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
+            ) : /* @__PURE__ */ jsxRuntimeExports.jsxs(
+              "button",
+              {
+                onClick: handleRecord,
+                disabled: processing,
+                "data-testid": "grammar-record",
+                className: "px-8 py-3.5 bg-primary text-on-primary rounded-full flex items-center gap-2 shadow-md hover:scale-105 active:scale-95 transition-all disabled:opacity-50 font-bold",
+                children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", style: { fontVariationSettings: "'FILL' 1" }, children: "mic" }),
+                  "Answer by Speaking"
+                ]
+              }
+            ),
+            isRecording && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-end gap-0.5 h-4", children: Array.from({ length: 10 }, (_, i) => /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "waveform-bar", style: { animationDelay: `${i * 0.07}s` } }, i)) }),
+            processing && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 text-secondary text-sm", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[16px]", children: "refresh" }),
+              processingMsg
+            ] })
+          ] }),
+          result && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-white rounded-3xl border border-outline-variant shadow-sm p-6 flex flex-col gap-4", "data-testid": "grammar-feedback", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 flex-wrap", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-3xl font-bold ${scoreColor(result.score)}`, children: [
+                result.score,
+                "%"
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-xs font-bold px-3 py-1 rounded-full ${result.used_target ? "bg-tertiary-container/40 text-tertiary" : "bg-error-container/30 text-error"}`, children: result.used_target ? "Used the grammar ✓" : "Did not use the grammar" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-xs font-bold px-3 py-1 rounded-full ${result.grammar_ok ? "bg-tertiary-container/40 text-tertiary" : "bg-error-container/30 text-error"}`, children: result.grammar_ok ? "Grammar correct" : "Grammar needs work" })
+            ] }),
+            result.feedback_th && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-4 bg-primary-fixed rounded-xl", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-secondary uppercase tracking-wider mb-1", children: "คำแนะนำ" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-on-surface", children: result.feedback_th })
+            ] }),
+            result.corrected_sentence && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-secondary uppercase tracking-wider mb-1", children: "ประโยคที่แก้แล้ว" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 p-3 bg-surface-container-low rounded-xl", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-on-surface flex-1", children: result.corrected_sentence }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    onClick: () => void playTts(result.corrected_sentence),
+                    disabled: ttsPlaying,
+                    className: "shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-secondary hover:text-primary hover:bg-surface-container transition-colors disabled:opacity-50",
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", style: { fontVariationSettings: "'FILL' 1" }, children: "volume_up" })
+                  }
+                )
+              ] })
+            ] }),
+            result.suggested_answer && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm font-semibold text-secondary uppercase tracking-wider mb-1", children: "ควรพูดประมาณนี้" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 p-3 bg-tertiary-container/15 rounded-xl", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-on-surface flex-1", children: result.suggested_answer }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    onClick: () => void playTts(result.suggested_answer),
+                    disabled: ttsPlaying,
+                    className: "shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-secondary hover:text-primary hover:bg-surface-container transition-colors disabled:opacity-50",
+                    children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", style: { fontVariationSettings: "'FILL' 1" }, children: "volume_up" })
+                  }
+                )
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-3 mt-1", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => setResult(null),
+                  className: "flex-1 px-6 py-3 bg-surface-container text-on-surface rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "replay" }),
+                    "Try Again"
+                  ]
                 }
-              },
-              rows: 1,
-              placeholder: transcribing ? "Transcribing your voice..." : "Answer in English... (Enter to send)",
-              className: "flex-1 px-4 py-3 rounded-2xl border border-outline-variant bg-white text-sm outline-none focus:border-primary resize-none max-h-32"
-            }
-          ),
-          /* @__PURE__ */ jsxRuntimeExports.jsx(
-            "button",
-            {
-              onClick: handleSend,
-              disabled: !input.trim() || thinking,
-              className: "w-11 h-11 rounded-full bg-primary text-on-primary flex items-center justify-center shrink-0 disabled:opacity-40 active:scale-95 transition-all",
-              children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[20px]", style: { fontVariationSettings: "'FILL' 1" }, children: "send" })
-            }
-          )
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => void loadQuestion(),
+                  className: "flex-1 px-6 py-3 bg-primary text-on-primary rounded-xl font-bold flex items-center justify-center gap-2 active:scale-95 transition-all",
+                  children: [
+                    "Next Challenge",
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "arrow_forward" })
+                  ]
+                }
+              )
+            ] })
+          ] }),
+          history.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm font-semibold text-secondary uppercase tracking-wider", children: [
+              "Practice history (",
+              history.length,
+              ")"
+            ] }),
+            history.slice(0, 10).map((attempt) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 bg-white border border-outline-variant rounded-xl flex flex-col gap-1", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-sm font-bold ${scoreColor(attempt.score)}`, children: [
+                  Math.round(attempt.score),
+                  "%"
+                ] }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-secondary truncate flex-1", children: attempt.question }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-secondary shrink-0", children: new Date(attempt.created_at).toLocaleString("th-TH") })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-on-surface-variant", children: [
+                "“",
+                attempt.transcript,
+                "”"
+              ] })
+            ] }, attempt.id))
+          ] })
         ] })
       ]
     }
   ) });
 }
 function Grammar() {
+  const [tab, setTab] = reactExports.useState("library");
   const [items, setItems] = reactExports.useState([]);
+  const [daily, setDaily] = reactExports.useState([]);
+  const [history, setHistory] = reactExports.useState([]);
   const [loading, setLoading] = reactExports.useState(true);
   const [expanded, setExpanded] = reactExports.useState(null);
   const [search, setSearch] = reactExports.useState("");
   const [practicing, setPracticing] = reactExports.useState(null);
-  reactExports.useEffect(() => {
-    (async () => {
-      const data = await window.api.grammar.list();
-      setItems(data);
-      setLoading(false);
-    })();
+  const [showAdd, setShowAdd] = reactExports.useState(false);
+  const [addText, setAddText] = reactExports.useState("");
+  const [adding, setAdding] = reactExports.useState(false);
+  const [addResult, setAddResult] = reactExports.useState("");
+  const load = reactExports.useCallback(async () => {
+    setLoading(true);
+    const [list, due] = await Promise.all([
+      window.api.grammar.list(),
+      window.api.grammar.dailyDue()
+    ]);
+    setItems(list);
+    setDaily(due);
+    setLoading(false);
   }, []);
+  reactExports.useEffect(() => {
+    void load();
+  }, [load]);
+  reactExports.useEffect(() => {
+    if (tab === "history") {
+      void (async () => {
+        const rows = await window.api.grammar.practiceHistory();
+        setHistory(rows);
+      })();
+    }
+  }, [tab, practicing]);
+  const handleAdd = async () => {
+    if (!addText.trim() || adding) return;
+    setAdding(true);
+    setAddResult("");
+    try {
+      const result = await window.api.grammar.add(addText);
+      setAddResult(result.merged ? `Updated existing topic: ${result.name}` : `Added: ${result.name}`);
+      setAddText("");
+      await load();
+      setTimeout(() => {
+        setShowAdd(false);
+        setAddResult("");
+      }, 1600);
+    } catch (e) {
+      setAddResult("Failed: " + String(e));
+    } finally {
+      setAdding(false);
+    }
+  };
+  const handleDelete = async (g, e) => {
+    e.stopPropagation();
+    if (!confirm(`Delete "${g.name}" and its practice history?`)) return;
+    await window.api.grammar.delete(g.id);
+    await load();
+  };
   const filtered = items.filter(
     (g) => g.name.toLowerCase().includes(search.toLowerCase()) || (g.explanation_th || "").includes(search) || (g.pattern || "").toLowerCase().includes(search.toLowerCase())
   );
@@ -11156,15 +11651,104 @@ function Grammar() {
       return [];
     }
   };
+  const scoreColor = (score) => score >= 85 ? "text-tertiary" : score >= 65 ? "text-[#f59e0b]" : "text-error";
+  const practicedCount = daily.filter((d) => d.practiced_today).length;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col h-screen overflow-hidden bg-background", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "w-full h-16 flex items-center justify-between px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-on-surface no-drag", children: "Grammar Library" }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-secondary no-drag", children: [
-        items.length,
-        " topics"
-      ] })
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "w-full h-16 flex items-center justify-between gap-4 px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-4 no-drag", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h1", { className: "text-xl font-bold text-on-surface", children: "Grammar Library" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center rounded-xl bg-surface-container p-1", role: "tablist", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "button",
+            {
+              role: "tab",
+              "aria-selected": tab === "library",
+              onClick: () => setTab("library"),
+              className: `px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${tab === "library" ? "bg-white text-primary shadow-sm" : "text-secondary"}`,
+              children: [
+                "Library (",
+                items.length,
+                ")"
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "button",
+            {
+              role: "tab",
+              "aria-selected": tab === "history",
+              onClick: () => setTab("history"),
+              className: `px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${tab === "history" ? "bg-white text-primary shadow-sm" : "text-secondary"}`,
+              children: "Practice History"
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "button",
+        {
+          onClick: () => setShowAdd(true),
+          "data-testid": "add-grammar",
+          className: "no-drag flex items-center gap-1.5 px-4 py-2 bg-primary text-on-primary rounded-xl text-sm font-bold hover:opacity-90 active:scale-95 transition-all",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "add" }),
+            "Add Grammar"
+          ]
+        }
+      )
     ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 overflow-y-auto no-scrollbar p-gutter", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto no-scrollbar p-gutter", children: loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-40", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : tab === "history" ? history.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center py-20 gap-4 text-secondary", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "history_edu" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: "No grammar practice yet" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: "Practice a topic from the Library tab to build your history" })
+    ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-3 max-w-3xl", children: history.map((attempt) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-4 bg-white rounded-2xl border border-outline-variant flex flex-col gap-1.5", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 flex-wrap", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-lg font-bold ${scoreColor(attempt.score)}`, children: [
+          Math.round(attempt.score),
+          "%"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold text-primary uppercase tracking-wide", children: attempt.grammar_name }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full ${attempt.used_target ? "bg-tertiary-container/40 text-tertiary" : "bg-error-container/30 text-error"}`, children: attempt.used_target ? "Used grammar" : "Missed grammar" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-secondary ml-auto", children: new Date(attempt.created_at).toLocaleString("th-TH") })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", children: attempt.question }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-on-surface", children: [
+        "“",
+        attempt.transcript,
+        "”"
+      ] }),
+      attempt.feedback_th && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-secondary", children: attempt.feedback_th })
+    ] }, attempt.id)) }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+      daily.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-6 p-5 bg-white rounded-2xl border border-outline-variant max-w-3xl", "data-testid": "grammar-daily", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between mb-3", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { className: "font-bold text-on-surface flex items-center gap-2", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[#f59e0b]", style: { fontVariationSettings: "'FILL' 1" }, children: "local_fire_department" }),
+            "Today’s Grammar Practice"
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-sm text-secondary", children: [
+            practicedCount,
+            " / ",
+            daily.length,
+            " done"
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-1 md:grid-cols-2 gap-3", children: daily.map((g) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "button",
+          {
+            onClick: () => setPracticing(g),
+            className: `p-4 rounded-xl border text-left transition-colors flex items-center gap-3 ${g.practiced_today ? "border-tertiary/40 bg-tertiary-container/10" : "border-outline-variant hover:border-primary/40"}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `material-symbols-outlined shrink-0 ${g.practiced_today ? "text-tertiary" : "text-outline-variant"}`, style: { fontVariationSettings: g.practiced_today ? "'FILL' 1" : "'FILL' 0" }, children: g.practiced_today ? "check_circle" : "radio_button_unchecked" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "min-w-0 flex-1", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-semibold text-on-surface text-sm truncate", children: g.name }),
+                g.pattern && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-ipa-label text-[11px] text-secondary truncate", children: g.pattern })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary shrink-0 text-[20px]", style: { fontVariationSettings: "'FILL' 1" }, children: "mic" })
+            ]
+          },
+          g.id
+        )) })
+      ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "relative mb-5 max-w-lg", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-secondary text-sm", children: "search" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
@@ -11178,10 +11762,11 @@ function Grammar() {
           }
         )
       ] }),
-      loading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-40", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center py-20 gap-4 text-secondary", children: [
+      filtered.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center py-20 gap-4 text-secondary", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "library_books" }),
         /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: "No grammar topics yet" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: "Complete sessions and run analysis to build your grammar library" })
+        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: "Complete sessions and run analysis, or add topics you learned elsewhere" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => setShowAdd(true), className: "mt-2 px-5 py-2.5 bg-primary text-on-primary rounded-xl font-bold text-sm", children: "Add your first grammar" })
       ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-3 max-w-3xl", children: filtered.map((g) => {
         const examples = parseExamples(g.examples);
         const isExpanded = expanded === g.id;
@@ -11224,9 +11809,24 @@ function Grammar() {
                           "data-testid": "grammar-practice",
                           className: "flex items-center gap-1.5 px-4 py-1.5 bg-primary text-on-primary rounded-lg text-sm font-bold hover:opacity-90 active:scale-95 transition-all",
                           children: [
-                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", style: { fontVariationSettings: "'FILL' 1" }, children: "school" }),
+                            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", style: { fontVariationSettings: "'FILL' 1" }, children: "mic" }),
                             "Practice"
                           ]
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "span",
+                        {
+                          role: "button",
+                          tabIndex: 0,
+                          onClick: (e) => void handleDelete(g, e),
+                          onKeyDown: (e) => {
+                            if (e.key === "Enter") void handleDelete(g, e);
+                          },
+                          title: "Delete topic",
+                          "data-testid": "grammar-delete",
+                          className: "w-8 h-8 rounded-full flex items-center justify-center text-secondary hover:text-error hover:bg-error-container/20 transition-colors",
+                          children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "delete" })
                         }
                       ),
                       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `material-symbols-outlined text-secondary transition-transform ${isExpanded ? "rotate-180" : ""}`, children: "expand_more" })
@@ -11248,7 +11848,10 @@ function Grammar() {
                 ] }),
                 g.last_seen_at && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-on-surface-variant", children: [
                   "Last seen: ",
-                  new Date(g.last_seen_at).toLocaleDateString("th-TH")
+                  new Date(g.last_seen_at).toLocaleDateString("th-TH"),
+                  " · practiced ",
+                  g.review_count,
+                  " times"
                 ] })
               ] })
             ]
@@ -11256,8 +11859,52 @@ function Grammar() {
           g.id
         );
       }) })
-    ] }),
-    practicing && /* @__PURE__ */ jsxRuntimeExports.jsx(GrammarPracticeChat, { grammar: practicing, onClose: () => setPracticing(null) })
+    ] }) }),
+    showAdd && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-sm", onClick: () => !adding && setShowAdd(false), children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "w-[560px] max-w-[calc(100vw-2rem)] bg-white rounded-3xl shadow-2xl p-6 flex flex-col gap-4", onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h2", { className: "text-lg font-bold text-on-surface", children: "Add Grammar Topic" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => !adding && setShowAdd(false), className: "text-secondary hover:text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined", children: "close" }) })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-on-surface-variant", children: "พิมพ์หรือวางสิ่งที่เรียนมา (โน้ต, ประโยคตัวอย่าง, กฎ) — AI จะระบุว่าคือ grammar อะไร พร้อมสรุป pattern คำอธิบาย และตัวอย่างให้" }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "textarea",
+        {
+          value: addText,
+          onChange: (e) => setAddText(e.target.value),
+          rows: 6,
+          placeholder: 'เช่น  "I have been to Japan twice. — เคยไปญี่ปุ่นสองครั้ง ใช้พูดถึงประสบการณ์"',
+          "data-testid": "grammar-add-text",
+          className: "px-4 py-3 rounded-xl border border-outline-variant bg-white text-sm outline-none focus:border-primary resize-none"
+        }
+      ),
+      addResult && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: `text-sm font-semibold ${addResult.startsWith("Failed") ? "text-error" : "text-tertiary"}`, children: addResult }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          onClick: () => void handleAdd(),
+          disabled: adding || !addText.trim(),
+          "data-testid": "grammar-add-save",
+          className: "px-6 py-3 bg-primary text-on-primary rounded-xl font-bold disabled:opacity-40 active:scale-95 transition-all flex items-center justify-center gap-2",
+          children: adding ? /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined animate-spin text-[18px]", children: "progress_activity" }),
+            "AI is analyzing your notes..."
+          ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[18px]", children: "auto_awesome" }),
+            "Analyze & Add"
+          ] })
+        }
+      )
+    ] }) }),
+    practicing && /* @__PURE__ */ jsxRuntimeExports.jsx(
+      GrammarSpeakPractice,
+      {
+        grammar: practicing,
+        onClose: () => {
+          setPracticing(null);
+          void load();
+        }
+      }
+    )
   ] });
 }
 function Settings() {
@@ -11527,6 +12174,21 @@ function Settings() {
             }
           ),
           /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-on-surface-variant", children: "Caps the Due Today review queue so daily reviews stay manageable" })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-sm font-semibold text-on-surface", children: "Daily Grammar Practice Topics" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "number",
+              min: 1,
+              max: 20,
+              value: settings["grammar_daily_count"] || "4",
+              onChange: (e) => setSettings((s) => ({ ...s, grammar_daily_count: e.target.value })),
+              className: "px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary w-32 text-sm"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-on-surface-variant", children: "How many grammar topics are randomly picked for Today’s Grammar Practice" })
         ] }),
         /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1.5", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-sm font-semibold text-on-surface", children: "Translation Workers" }),
@@ -12036,10 +12698,16 @@ function SpeakingPractice() {
   const mediaRecorderRef = reactExports.useRef(null);
   const chunksRef = reactExports.useRef([]);
   const [ttsPlaying, setTtsPlaying] = reactExports.useState(false);
+  const HISTORY_PAGE_SIZE = 8;
   const [history, setHistory] = reactExports.useState([]);
   const [historyLoading, setHistoryLoading] = reactExports.useState(false);
+  const [historyQuery, setHistoryQuery] = reactExports.useState("");
+  const [historyPage, setHistoryPage] = reactExports.useState(1);
+  const [historyTotal, setHistoryTotal] = reactExports.useState(0);
+  const historySearchTimerRef = reactExports.useRef(null);
   const [expandedQuestion, setExpandedQuestion] = reactExports.useState(null);
   const [expandedAnswers, setExpandedAnswers] = reactExports.useState([]);
+  const [sessionFilter, setSessionFilter] = reactExports.useState("");
   reactExports.useEffect(() => {
     (async () => {
       const list = await window.api.speaking.sessions();
@@ -12050,15 +12718,24 @@ function SpeakingPractice() {
     setProgressMsg(data.msg);
     setProcessingMsg(data.msg);
   }), []);
-  const loadHistory = reactExports.useCallback(async () => {
+  const loadHistory = reactExports.useCallback(async (searchQuery, pageNum) => {
     setHistoryLoading(true);
-    const rows = await window.api.speaking.history();
-    setHistory(rows);
+    const result = await window.api.speaking.history({ query: searchQuery, page: pageNum, pageSize: HISTORY_PAGE_SIZE });
+    setHistory(result.items);
+    setHistoryTotal(result.total);
     setHistoryLoading(false);
   }, []);
   reactExports.useEffect(() => {
-    if (tab === "history") void loadHistory();
-  }, [tab, loadHistory]);
+    if (tab === "history") void loadHistory(historyQuery, historyPage);
+  }, [tab]);
+  const handleHistorySearch = (value) => {
+    setHistoryQuery(value);
+    if (historySearchTimerRef.current) clearTimeout(historySearchTimerRef.current);
+    historySearchTimerRef.current = setTimeout(() => {
+      setHistoryPage(1);
+      void loadHistory(value, 1);
+    }, 450);
+  };
   const startQuiz = reactExports.useCallback(async () => {
     if (!selectedSession) return;
     setStep("generating");
@@ -12077,6 +12754,10 @@ function SpeakingPractice() {
   }, [selectedSession, questionCount]);
   const currentQuestion = questions[currentIdx];
   const currentResult = currentQuestion ? results[currentQuestion.id] : void 0;
+  const filteredSessions = reactExports.useMemo(() => {
+    const q2 = sessionFilter.trim().toLowerCase();
+    return q2 ? sessions.filter((s) => s.title.toLowerCase().includes(q2)) : sessions;
+  }, [sessions, sessionFilter]);
   const playTts = reactExports.useCallback(async (text) => {
     if (!text || ttsPlaying) return;
     setTtsPlaying(true);
@@ -12213,66 +12894,96 @@ function SpeakingPractice() {
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex-1 overflow-y-auto no-scrollbar p-gutter", children: tab === "history" ? (
       /* ── Answer history ─────────────────────────────────────────────── */
-      historyLoading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-40", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : history.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center py-20 gap-4 text-secondary", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "forum" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: "No speaking answers yet" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: "Answer questions in the Practice tab to build your history" })
-      ] }) : /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-3 max-w-3xl mx-auto", children: history.map((entry) => {
-        const isExpanded = expandedQuestion === entry.id;
-        return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-white rounded-2xl border border-outline-variant overflow-hidden", children: [
-          /* @__PURE__ */ jsxRuntimeExports.jsxs(
-            "button",
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3 max-w-3xl mx-auto", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex items-center gap-2 px-4 py-2.5 bg-white border border-outline-variant rounded-xl focus-within:border-primary", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-secondary text-[18px]", children: "search" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
             {
-              onClick: () => void toggleHistoryQuestion(entry.id),
-              className: "w-full p-4 flex items-center gap-4 text-left hover:bg-surface-container-low transition-colors",
-              children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0", children: [
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-semibold text-on-surface text-sm", children: entry.question_en }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-secondary mt-0.5 truncate", children: [
-                    entry.session_title,
-                    " · ",
-                    new Date(entry.created_at).toLocaleDateString("th-TH")
-                  ] })
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 shrink-0", children: [
-                  entry.best_score != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-sm font-bold ${scoreColor(entry.best_score)}`, children: [
-                    Math.round(entry.best_score),
-                    "%"
-                  ] }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-secondary", children: [
-                    entry.answer_count,
-                    " answer(s)"
-                  ] }),
-                  /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `material-symbols-outlined text-secondary transition-transform ${isExpanded ? "rotate-180" : ""}`, children: "expand_more" })
-                ] })
-              ]
+              value: historyQuery,
+              onChange: (e) => handleHistorySearch(e.target.value),
+              placeholder: "Search your questions by meaning...",
+              "data-testid": "speaking-history-search",
+              className: "w-full bg-transparent outline-none text-sm"
             }
           ),
-          isExpanded && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 pb-4 flex flex-col gap-2 border-t border-outline-variant pt-3", children: expandedAnswers.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", children: "No answers recorded for this question yet" }) : expandedAnswers.map((answer) => {
-            const suggestion = parseSuggestion(answer.suggested_answer);
-            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 bg-surface-container-low rounded-xl flex flex-col gap-1", children: [
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
-                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-sm font-bold ${scoreColor(answer.score)}`, children: [
-                  Math.round(answer.score),
-                  "%"
-                ] }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full ${answer.grammar_ok ? "bg-tertiary-container/40 text-tertiary" : "bg-error-container/30 text-error"}`, children: answer.grammar_ok ? "Grammar OK" : "Grammar issues" }),
-                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-secondary ml-auto", children: new Date(answer.created_at).toLocaleString("th-TH") })
-              ] }),
-              /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-on-surface", children: [
-                "“",
-                answer.transcript,
-                "”"
-              ] }),
-              answer.feedback_th && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-secondary", children: answer.feedback_th }),
-              suggestion.suggested && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-primary", children: [
-                "Suggested: ",
-                suggestion.suggested
-              ] })
-            ] }, answer.id);
-          }) })
-        ] }, entry.id);
-      }) })
+          historyQuery && /* @__PURE__ */ jsxRuntimeExports.jsx("button", { onClick: () => handleHistorySearch(""), className: "text-secondary hover:text-primary", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-[16px]", children: "close" }) })
+        ] }),
+        historyLoading ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center justify-center h-40", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-4xl text-secondary animate-spin", children: "refresh" }) }) : history.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center justify-center py-20 gap-4 text-secondary", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-6xl opacity-30", children: "forum" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-lg", children: historyQuery ? "No questions match this search" : "No speaking answers yet" }),
+          !historyQuery && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm opacity-60", children: "Answer questions in the Practice tab to build your history" })
+        ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-3", children: [
+          history.map((entry) => {
+            const isExpanded = expandedQuestion === entry.id;
+            return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-white rounded-2xl border border-outline-variant overflow-hidden", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  onClick: () => void toggleHistoryQuestion(entry.id),
+                  className: "w-full p-4 flex items-center gap-4 text-left hover:bg-surface-container-low transition-colors",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex-1 min-w-0", children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "font-semibold text-on-surface text-sm", children: entry.question_en }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-secondary mt-0.5 truncate", children: [
+                        entry.session_title,
+                        " · ",
+                        new Date(entry.created_at).toLocaleDateString("th-TH")
+                      ] })
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3 shrink-0", children: [
+                      entry.best_score != null && /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-sm font-bold ${scoreColor(entry.best_score)}`, children: [
+                        Math.round(entry.best_score),
+                        "%"
+                      ] }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-xs text-secondary", children: [
+                        entry.answer_count,
+                        " answer(s)"
+                      ] }),
+                      /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `material-symbols-outlined text-secondary transition-transform ${isExpanded ? "rotate-180" : ""}`, children: "expand_more" })
+                    ] })
+                  ]
+                }
+              ),
+              isExpanded && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "px-4 pb-4 flex flex-col gap-2 border-t border-outline-variant pt-3", children: expandedAnswers.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-sm text-secondary", children: "No answers recorded for this question yet" }) : expandedAnswers.map((answer) => {
+                const suggestion = parseSuggestion(answer.suggested_answer);
+                return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-3 bg-surface-container-low rounded-xl flex flex-col gap-1", children: [
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: `text-sm font-bold ${scoreColor(answer.score)}`, children: [
+                      Math.round(answer.score),
+                      "%"
+                    ] }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: `text-[10px] font-bold px-2 py-0.5 rounded-full ${answer.grammar_ok ? "bg-tertiary-container/40 text-tertiary" : "bg-error-container/30 text-error"}`, children: answer.grammar_ok ? "Grammar OK" : "Grammar issues" }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-[10px] text-secondary ml-auto", children: new Date(answer.created_at).toLocaleString("th-TH") })
+                  ] }),
+                  /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-on-surface", children: [
+                    "“",
+                    answer.transcript,
+                    "”"
+                  ] }),
+                  answer.feedback_th && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-secondary", children: answer.feedback_th }),
+                  suggestion.suggested && /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-xs text-primary", children: [
+                    "Suggested: ",
+                    suggestion.suggested
+                  ] })
+                ] }, answer.id);
+              }) })
+            ] }, entry.id);
+          }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Pager,
+            {
+              page: historyPage,
+              total: historyTotal,
+              pageSize: HISTORY_PAGE_SIZE,
+              onPage: (p2) => {
+                setHistoryPage(p2);
+                void loadHistory(historyQuery, p2);
+              }
+            }
+          )
+        ] })
+      ] })
     ) : step === "setup" ? (
       /* ── Setup: pick session + count ────────────────────────────────── */
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "max-w-xl mx-auto flex flex-col gap-6 py-8", children: [
@@ -12287,7 +12998,19 @@ function SpeakingPractice() {
         ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
           /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-2", children: [
             /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-sm font-semibold text-on-surface", children: "Session" }),
-            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-2 max-h-72 overflow-y-auto no-scrollbar", children: sessions.map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            sessions.length > 5 && /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "flex items-center gap-2 px-3 py-2 bg-white border border-outline-variant rounded-xl focus-within:border-primary", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-secondary text-[16px]", children: "search" }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  value: sessionFilter,
+                  onChange: (e) => setSessionFilter(e.target.value),
+                  placeholder: "Filter sessions...",
+                  className: "w-full bg-transparent outline-none text-sm"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex flex-col gap-2 max-h-72 overflow-y-auto no-scrollbar", children: filteredSessions.map((s) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
               "button",
               {
                 onClick: () => setSelectedSession(s.id),
@@ -12510,7 +13233,7 @@ function SpeakingPractice() {
     ) : null })
   ] });
 }
-const APP_VERSION = "0.0.14";
+const APP_VERSION = "0.0.15";
 function App() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(HashRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden bg-surface text-on-surface relative", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),

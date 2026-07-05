@@ -3,7 +3,7 @@ const electron = require("electron");
 const api = {
   // Sessions
   sessions: {
-    list: () => electron.ipcRenderer.invoke("session:list"),
+    list: (opts) => electron.ipcRenderer.invoke("session:list", opts),
     get: (id) => electron.ipcRenderer.invoke("session:get", id),
     delete: (id) => electron.ipcRenderer.invoke("session:delete", id),
     updateProgress: (id, data) => electron.ipcRenderer.invoke("session:update-progress", id, data),
@@ -55,7 +55,7 @@ const api = {
     transcribe: (audioPath) => electron.ipcRenderer.invoke("speaking:transcribe", audioPath),
     evaluate: (questionId, transcript, audioPath) => electron.ipcRenderer.invoke("speaking:evaluate", questionId, transcript, audioPath),
     answers: (questionId) => electron.ipcRenderer.invoke("speaking:answers", questionId),
-    history: () => electron.ipcRenderer.invoke("speaking:history"),
+    history: (opts) => electron.ipcRenderer.invoke("speaking:history", opts),
     onProgress: (cb) => {
       const listener = (_event, data) => cb(data);
       electron.ipcRenderer.on("speaking:progress", listener);
@@ -82,7 +82,12 @@ const api = {
   // Grammar & Vocabulary
   grammar: {
     list: () => electron.ipcRenderer.invoke("grammar:list"),
-    chat: (grammarId, messages) => electron.ipcRenderer.invoke("grammar:chat", grammarId, messages)
+    add: (text) => electron.ipcRenderer.invoke("grammar:add", text),
+    delete: (grammarId) => electron.ipcRenderer.invoke("grammar:delete", grammarId),
+    dailyDue: () => electron.ipcRenderer.invoke("grammar:daily-due"),
+    practiceQuestion: (grammarId) => electron.ipcRenderer.invoke("grammar:practice:question", grammarId),
+    practiceEvaluate: (grammarId, question, transcript, audioPath) => electron.ipcRenderer.invoke("grammar:practice:evaluate", grammarId, question, transcript, audioPath),
+    practiceHistory: (grammarId) => electron.ipcRenderer.invoke("grammar:practice:history", grammarId)
   },
   vocabulary: {
     list: () => electron.ipcRenderer.invoke("vocabulary:list")
