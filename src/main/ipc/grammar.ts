@@ -1,55 +1,124 @@
 import { ipcMain } from 'electron'
-import { getDb } from '../services/database'
-import { aiChat } from '../services/ai'
+import crypto from 'crypto'
+import { v4 as uuidv4 } from 'uuid'
+import { getDb, getSetting } from '../services/database'
+import {
+  GrammarInfo,
+  normalizeGrammar,
+  generateGrammarQuestion,
+  evaluateGrammarAnswer
+} from '../services/grammarPractice'
 
-type GrammarRow = {
-  id: string
-  name: string
-  pattern: string | null
-  explanation_th: string | null
-  examples: string
+type GrammarRow = GrammarInfo & { id: string; source_sessions: string }
+
+function getGrammar(grammarId: string): GrammarRow {
+  const row = getDb()
+    .prepare('SELECT id, name, pattern, explanation_th, examples, source_sessions FROM grammar_items WHERE id = ?')
+    .get(grammarId) as GrammarRow | undefined
+  if (!row) throw new Error('Grammar topic not found')
+  return row
 }
 
 export function registerGrammarHandlers(): void {
-  ipcMain.handle('grammar:chat', async (_e, grammarId: string, messages: { role: 'user' | 'assistant'; content: string }[]) => {
+  // Add a topic from free-form notes: AI identifies the grammar + examples
+  ipcMain.handle('grammar:add', async (_e, text: string) => {
+    if (!text.trim()) throw new Error('Empty grammar notes')
     const db = getDb()
-    const grammar = db
-      .prepare('SELECT id, name, pattern, explanation_th, examples FROM grammar_items WHERE id = ?')
-      .get(grammarId) as GrammarRow | undefined
-    if (!grammar) throw new Error('Grammar topic not found')
+    const normalized = await normalizeGrammar(text)
 
-    // First message of a practice session counts as a review of this topic
-    if (messages.filter((m) => m.role === 'user').length <= 1) {
-      db.prepare('UPDATE grammar_items SET review_count = review_count + 1, last_seen_at = ? WHERE id = ?')
-        .run(new Date().toISOString(), grammarId)
+    const existing = db
+      .prepare('SELECT id FROM grammar_items WHERE name = ? COLLATE NOCASE')
+      .get(normalized.name) as { id: string } | undefined
+    if (existing) {
+      db.prepare('UPDATE grammar_items SET pattern = ?, explanation_th = ?, examples = ?, last_seen_at = ? WHERE id = ?')
+        .run(normalized.pattern, normalized.explanation_th, JSON.stringify(normalized.examples), new Date().toISOString(), existing.id)
+      return { id: existing.id, merged: true, name: normalized.name }
     }
 
-    let examples = ''
-    try {
-      const parsed = JSON.parse(grammar.examples || '[]') as { original: string; translate: string }[]
-      examples = parsed.map((ex) => `- ${ex.original}${ex.translate ? ` (${ex.translate})` : ''}`).join('\n')
-    } catch {
-      examples = ''
-    }
+    const id = `grm_${uuidv4()}`
+    db.prepare(
+      'INSERT INTO grammar_items (id, name, pattern, explanation_th, examples, last_seen_at, source_sessions) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, normalized.name, normalized.pattern, normalized.explanation_th, JSON.stringify(normalized.examples), new Date().toISOString(), '[]')
+    return { id, merged: false, name: normalized.name }
+  })
 
-    const system = `You are a friendly English tutor coaching a Thai learner to actively USE this grammar topic in speech:
+  ipcMain.handle('grammar:delete', (_e, grammarId: string) => {
+    getDb().prepare('DELETE FROM grammar_items WHERE id = ?').run(grammarId)
+    return true
+  })
 
-Topic: ${grammar.name}
-${grammar.pattern ? `Pattern: ${grammar.pattern}` : ''}
-${grammar.explanation_th ? `Thai explanation: ${grammar.explanation_th}` : ''}
-${examples ? `Examples:\n${examples}` : ''}
+  // Deterministic daily selection: N topics per calendar day, rotated by a
+  // date-seeded hash so every day gets a different mix.
+  ipcMain.handle('grammar:daily-due', () => {
+    const db = getDb()
+    const count = Math.max(1, parseInt(getSetting('grammar_daily_count') || '4', 10) || 4)
+    const today = new Date().toISOString().slice(0, 10)
 
-Coaching rules:
-- Explain briefly in Thai, but all example sentences and challenges are in English.
-- Each turn: give ONE short situation or question that forces the learner to answer in English using this grammar.
-- When the learner answers, first say whether the grammar was used correctly. If wrong, show the corrected sentence and explain the fix in 1-2 Thai sentences. Then give the next challenge.
-- Keep every reply under 130 words. Never answer the challenge for the learner. Do not use markdown tables.`
+    const all = db.prepare('SELECT * FROM grammar_items').all() as (GrammarRow & Record<string, unknown>)[]
+    const picked = all
+      .map((g) => ({ g, key: crypto.createHash('md5').update(`${today}:${g.id}`).digest('hex') }))
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .slice(0, count)
+      .map(({ g }) => g)
 
-    const reply = await aiChat(
-      'analysis',
-      [{ role: 'system', content: system }, ...messages],
-      { temperature: 0.5, num_ctx: 8192 }
+    const practicedToday = new Set(
+      (db.prepare("SELECT DISTINCT grammar_id FROM grammar_practice_history WHERE date(created_at) = date('now')").all() as { grammar_id: string }[])
+        .map((r) => r.grammar_id)
     )
-    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() }
+    return picked.map((g) => ({ ...g, practiced_today: practicedToday.has(g.id) }))
+  })
+
+  // One speaking challenge for a topic (avoids repeating recent questions)
+  ipcMain.handle('grammar:practice:question', async (_e, grammarId: string) => {
+    const grammar = getGrammar(grammarId)
+    const recent = (getDb()
+      .prepare('SELECT DISTINCT question FROM grammar_practice_history WHERE grammar_id = ? ORDER BY created_at DESC LIMIT 8')
+      .all(grammarId) as { question: string }[]).map((r) => r.question)
+    return generateGrammarQuestion(grammar, recent)
+  })
+
+  ipcMain.handle('grammar:practice:evaluate', async (
+    _e,
+    grammarId: string,
+    question: string,
+    transcript: string,
+    audioPath?: string
+  ) => {
+    if (!transcript.trim()) throw new Error('Empty answer transcript')
+    const grammar = getGrammar(grammarId)
+    const evaluation = await evaluateGrammarAnswer({ grammar, question, transcript: transcript.trim() })
+
+    const db = getDb()
+    const id = `gpa_${uuidv4()}`
+    db.prepare(`
+      INSERT INTO grammar_practice_history
+        (id, grammar_id, question, transcript, audio_path, score, grammar_ok, used_target, feedback_th, suggested_answer, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, grammarId, question, transcript.trim(), audioPath || null,
+      evaluation.score, evaluation.grammar_ok ? 1 : 0, evaluation.used_target ? 1 : 0,
+      evaluation.feedback_th,
+      JSON.stringify({ corrected: evaluation.corrected_sentence, suggested: evaluation.suggested_answer }),
+      new Date().toISOString()
+    )
+    db.prepare('UPDATE grammar_items SET review_count = review_count + 1, last_seen_at = ? WHERE id = ?')
+      .run(new Date().toISOString(), grammarId)
+
+    return { attemptId: id, ...evaluation }
+  })
+
+  ipcMain.handle('grammar:practice:history', (_e, grammarId?: string) => {
+    const db = getDb()
+    if (grammarId) {
+      return db
+        .prepare('SELECT * FROM grammar_practice_history WHERE grammar_id = ? ORDER BY created_at DESC LIMIT 100')
+        .all(grammarId)
+    }
+    return db.prepare(`
+      SELECT h.*, g.name as grammar_name
+      FROM grammar_practice_history h
+      JOIN grammar_items g ON g.id = h.grammar_id
+      ORDER BY h.created_at DESC LIMIT 200
+    `).all()
   })
 }

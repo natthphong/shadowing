@@ -3,7 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 const api = {
   // Sessions
   sessions: {
-    list: () => ipcRenderer.invoke('session:list'),
+    list: (opts?: { query?: string; page?: number; pageSize?: number }) =>
+      ipcRenderer.invoke('session:list', opts),
     get: (id: string) => ipcRenderer.invoke('session:get', id),
     delete: (id: string) => ipcRenderer.invoke('session:delete', id),
     updateProgress: (id: string, data: Record<string, unknown>) =>
@@ -71,7 +72,8 @@ const api = {
     evaluate: (questionId: string, transcript: string, audioPath?: string) =>
       ipcRenderer.invoke('speaking:evaluate', questionId, transcript, audioPath),
     answers: (questionId: string) => ipcRenderer.invoke('speaking:answers', questionId),
-    history: () => ipcRenderer.invoke('speaking:history'),
+    history: (opts?: { query?: string; page?: number; pageSize?: number }) =>
+      ipcRenderer.invoke('speaking:history', opts),
     onProgress: (cb: (data: { status: string; msg: string }) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, data: { status: string; msg: string }): void => cb(data)
       ipcRenderer.on('speaking:progress', listener)
@@ -101,8 +103,13 @@ const api = {
   // Grammar & Vocabulary
   grammar: {
     list: () => ipcRenderer.invoke('grammar:list'),
-    chat: (grammarId: string, messages: { role: string; content: string }[]) =>
-      ipcRenderer.invoke('grammar:chat', grammarId, messages)
+    add: (text: string) => ipcRenderer.invoke('grammar:add', text),
+    delete: (grammarId: string) => ipcRenderer.invoke('grammar:delete', grammarId),
+    dailyDue: () => ipcRenderer.invoke('grammar:daily-due'),
+    practiceQuestion: (grammarId: string) => ipcRenderer.invoke('grammar:practice:question', grammarId),
+    practiceEvaluate: (grammarId: string, question: string, transcript: string, audioPath?: string) =>
+      ipcRenderer.invoke('grammar:practice:evaluate', grammarId, question, transcript, audioPath),
+    practiceHistory: (grammarId?: string) => ipcRenderer.invoke('grammar:practice:history', grammarId)
   },
   vocabulary: {
     list: () => ipcRenderer.invoke('vocabulary:list')

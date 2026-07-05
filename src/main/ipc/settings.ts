@@ -9,7 +9,8 @@ export function registerSettingsHandlers(): void {
       'interactive_translate_model', 'analysis_model', 'embedding_model',
       'tts_model', 'low_score_threshold', 'translate_workers', 'max_due_cards',
       'gemini_api_key', 'analysis_provider', 'translate_provider', 'tts_provider',
-      'gemini_analysis_model', 'gemini_translate_model', 'gemini_tts_model', 'gemini_tts_voice'
+      'gemini_analysis_model', 'gemini_translate_model', 'gemini_tts_model', 'gemini_tts_voice',
+      'grammar_daily_count'
     ]
     const result: Record<string, string> = {}
     for (const k of keys) {

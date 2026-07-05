@@ -1,7 +1,7 @@
 {
   "name": "daily-speaking",
   "productName": "Daily Speaking",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "English shadowing and speaking practice for Thai learners",
   "main": "out/main/index.js",
   "author": "Daily Speaking",

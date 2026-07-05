@@ -3,7 +3,7 @@
 interface Window {
   api: {
     sessions: {
-      list: () => Promise<unknown[]>
+      list: (opts?: { query?: string; page?: number; pageSize?: number }) => Promise<{ items: unknown[]; total: number; page: number; pageSize: number }>
       get: (id: string) => Promise<unknown>
       delete: (id: string) => Promise<boolean>
       updateProgress: (id: string, data: Record<string, unknown>) => Promise<boolean>
@@ -48,7 +48,7 @@ interface Window {
       transcribe: (audioPath: string) => Promise<{ transcript: string }>
       evaluate: (questionId: string, transcript: string, audioPath?: string) => Promise<import('./types').SpeakingEvaluationResult>
       answers: (questionId: string) => Promise<unknown[]>
-      history: () => Promise<unknown[]>
+      history: (opts?: { query?: string; page?: number; pageSize?: number }) => Promise<{ items: unknown[]; total: number; page: number; pageSize: number }>
       onProgress: (cb: (data: { status: string; msg: string }) => void) => () => void
     }
     exam: {
@@ -64,7 +64,12 @@ interface Window {
     }
     grammar: {
       list: () => Promise<unknown[]>
-      chat: (grammarId: string, messages: { role: string; content: string }[]) => Promise<{ reply: string }>
+      add: (text: string) => Promise<{ id: string; merged: boolean; name: string }>
+      delete: (grammarId: string) => Promise<boolean>
+      dailyDue: () => Promise<unknown[]>
+      practiceQuestion: (grammarId: string) => Promise<{ question_en: string; question_th: string }>
+      practiceEvaluate: (grammarId: string, question: string, transcript: string, audioPath?: string) => Promise<import('./types').GrammarEvaluationResult>
+      practiceHistory: (grammarId?: string) => Promise<unknown[]>
     }
     vocabulary: {
       list: () => Promise<unknown[]>

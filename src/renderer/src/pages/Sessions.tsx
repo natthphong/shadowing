@@ -1,15 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Session } from '../types'
+import Pager from '../components/Pager'
+
+const PAGE_SIZE = 8
 
 export default function Sessions(): JSX.Element {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState<Session[]>([])
   const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [searching, setSearching] = useState(false)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const load = useCallback(async (): Promise<void> => {
+  const load = useCallback(async (searchQuery: string, pageNum: number): Promise<void> => {
     setLoading(true)
-    const data = await window.api.sessions.list() as Session[]
+    const result = await window.api.sessions.list({ query: searchQuery, page: pageNum, pageSize: PAGE_SIZE })
+    const data = result.items as Session[]
+    setTotal(result.total)
     const reconciled = await Promise.all(data.map(async (session) => {
       const saved = localStorage.getItem(`progress_max_${session.id}`) ?? localStorage.getItem(`progress_${session.id}`)
       const savedIndex = saved === null ? -1 : Number.parseInt(saved, 10)
@@ -26,15 +36,32 @@ export default function Sessions(): JSX.Element {
     }))
     setSessions(reconciled)
     setLoading(false)
+    setSearching(false)
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => { void load('', 1) }, [load])
+
+  // Debounced semantic search — bge-m3 embedding runs in the main process
+  const handleQueryChange = (value: string): void => {
+    setQuery(value)
+    setSearching(true)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => {
+      setPage(1)
+      void load(value, 1)
+    }, 450)
+  }
+
+  const goToPage = (nextPage: number): void => {
+    setPage(nextPage)
+    void load(query, nextPage)
+  }
 
   const deleteSession = async (id: string, e: React.MouseEvent): Promise<void> => {
     e.stopPropagation()
     if (!confirm('Delete this session?')) return
     await window.api.sessions.delete(id)
-    void load()
+    void load(query, page)
   }
 
   const formatDate = (iso: string): string =>
@@ -48,20 +75,38 @@ export default function Sessions(): JSX.Element {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
-      <header className="w-full h-16 flex items-center px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region">
+      <header className="w-full h-16 flex items-center justify-between gap-4 px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region">
         <h1 className="text-xl font-bold text-on-surface no-drag">Sessions</h1>
+        <span className="text-sm text-secondary no-drag">{total} sessions</span>
       </header>
 
       <div className="flex-1 overflow-y-auto no-scrollbar p-gutter">
+        {/* Semantic search */}
+        <label className="max-w-4xl mb-5 flex items-center gap-2 px-4 py-2.5 bg-white border border-outline-variant rounded-xl focus-within:border-primary">
+          <span className="material-symbols-outlined text-secondary text-[18px]">{searching ? 'hourglass_empty' : 'search'}</span>
+          <input
+            value={query}
+            onChange={(e) => handleQueryChange(e.target.value)}
+            placeholder="Search sessions by meaning — e.g. 'email etiquette' or 'running and bad days'"
+            data-testid="session-search"
+            className="w-full bg-transparent outline-none text-sm"
+          />
+          {query && (
+            <button onClick={() => handleQueryChange('')} className="text-secondary hover:text-primary">
+              <span className="material-symbols-outlined text-[16px]">close</span>
+            </button>
+          )}
+        </label>
+
         {loading ? (
-          <div className="flex items-center justify-center h-full">
+          <div className="flex items-center justify-center h-64">
             <span className="material-symbols-outlined text-4xl text-secondary animate-spin">refresh</span>
           </div>
         ) : sessions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full gap-4 text-secondary">
+          <div className="flex flex-col items-center justify-center h-64 gap-4 text-secondary">
             <span className="material-symbols-outlined text-6xl opacity-30">school</span>
-            <p className="text-lg">No sessions yet</p>
-            <p className="text-sm opacity-60">Click "New Session" to import content</p>
+            <p className="text-lg">{query ? 'No sessions match this search' : 'No sessions yet'}</p>
+            {!query && <p className="text-sm opacity-60">Click "New Session" to import content</p>}
           </div>
         ) : (
           <div className="grid gap-4 max-w-4xl">
@@ -139,6 +184,7 @@ export default function Sessions(): JSX.Element {
               </div>
               )
             })}
+            <Pager page={page} total={total} pageSize={PAGE_SIZE} onPage={goToPage} />
           </div>
         )}
       </div>

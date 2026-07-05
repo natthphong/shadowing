@@ -277,6 +277,31 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_speaking_questions_session ON speaking_questions(session_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_speaking_answers_question ON speaking_answers(question_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS embeddings (
+      kind TEXT NOT NULL,
+      ref_id TEXT NOT NULL,
+      vector TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (kind, ref_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS grammar_practice_history (
+      id TEXT PRIMARY KEY,
+      grammar_id TEXT NOT NULL,
+      question TEXT NOT NULL,
+      transcript TEXT NOT NULL,
+      audio_path TEXT,
+      score REAL DEFAULT 0,
+      grammar_ok INTEGER DEFAULT 0,
+      used_target INTEGER DEFAULT 0,
+      feedback_th TEXT,
+      suggested_answer TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (grammar_id) REFERENCES grammar_items(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_grammar_practice_grammar ON grammar_practice_history(grammar_id, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -306,6 +331,7 @@ function initDatabase() {
     INSERT OR IGNORE INTO settings VALUES ('gemini_translate_model', 'gemini-3.1-flash-lite');
     INSERT OR IGNORE INTO settings VALUES ('gemini_tts_model', 'gemini-3.1-flash-tts-preview');
     INSERT OR IGNORE INTO settings VALUES ('gemini_tts_voice', 'Kore');
+    INSERT OR IGNORE INTO settings VALUES ('grammar_daily_count', '4');
   `);
   log.info("Database initialized");
 }
@@ -348,10 +374,180 @@ function setCachedTranslation(word, translation) {
     (/* @__PURE__ */ new Date()).toISOString()
   );
 }
+function migrateYoutubeToStream() {
+  if (getSetting("yt_stream_migrated") === "1") return;
+  const db2 = getDb();
+  const mediaDir = getMediaDir();
+  const ytSources = db2.prepare("SELECT id, local_media_path FROM sources WHERE type = 'youtube' AND local_media_path IS NOT NULL AND local_media_path != ''").all();
+  let freedBytes = 0;
+  const removeFile = (p) => {
+    try {
+      if (p && fs.existsSync(p) && fs.statSync(p).isFile()) {
+        freedBytes += fs.statSync(p).size;
+        fs.unlinkSync(p);
+      }
+    } catch (err) {
+      log.warn("yt-stream migration: could not delete", p, err);
+    }
+  };
+  for (const src of ytSources) {
+    removeFile(src.local_media_path);
+  }
+  if (ytSources.length > 0) {
+    db2.prepare("UPDATE sources SET local_media_path = '' WHERE type = 'youtube'").run();
+  }
+  const referenced = new Set(
+    db2.prepare("SELECT local_media_path FROM sources WHERE local_media_path IS NOT NULL AND local_media_path != ''").all().map((r) => path.basename(r.local_media_path))
+  );
+  for (const name of fs.readdirSync(mediaDir)) {
+    const isYtLeftover = name.startsWith("yt_") || name.startsWith("yt_vid_");
+    const isExtractLeftover = name.startsWith("audio_") && name.endsWith(".wav");
+    if ((isYtLeftover || isExtractLeftover) && !referenced.has(name)) {
+      removeFile(path.join(mediaDir, name));
+    }
+  }
+  setSetting("yt_stream_migrated", "1");
+  log.info(`yt-stream migration: ${ytSources.length} sources switched, freed ${(freedBytes / 1024 / 1024).toFixed(1)} MB`);
+}
+function baseUrl() {
+  return getSetting("ollama_base_url") || "http://localhost:11434";
+}
+async function ollamaGenerate(model, prompt, options) {
+  const url = `${baseUrl()}/api/generate`;
+  const body = {
+    model,
+    prompt,
+    stream: false,
+    options: {
+      temperature: options?.temperature ?? 0.3,
+      num_ctx: options?.num_ctx ?? 4096
+    }
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!res.ok) throw new Error(`Ollama error: ${res.status} ${await res.text()}`);
+  const data = await res.json();
+  return data.response.trim();
+}
+async function ollamaEmbed(texts) {
+  const model = getSetting("embedding_model") || "bge-m3";
+  const url = `${baseUrl()}/api/embed`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, input: texts })
+  });
+  if (!res.ok) throw new Error(`Embed error: ${res.status}`);
+  const data = await res.json();
+  return data.embeddings;
+}
+async function listModels() {
+  try {
+    const res = await fetch(`${baseUrl()}/api/tags`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.models.map((m) => m.name);
+  } catch {
+    return [];
+  }
+}
+function extractJSON(text) {
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const start = Math.min(
+    text.indexOf("[") === -1 ? Infinity : text.indexOf("["),
+    text.indexOf("{") === -1 ? Infinity : text.indexOf("{")
+  );
+  if (start === Infinity) throw new Error("No JSON found");
+  const openChar = text[start];
+  const closeChar = openChar === "[" ? "]" : "}";
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === openChar) depth++;
+    else if (text[i] === closeChar) {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end === -1) throw new Error("Unmatched JSON");
+  return text.slice(start, end + 1);
+}
+function storeEmbeddings(kind, items) {
+  const db2 = getDb();
+  const insert = db2.prepare(
+    "INSERT OR REPLACE INTO embeddings (kind, ref_id, vector, created_at) VALUES (?, ?, ?, ?)"
+  );
+  const tx = db2.transaction(() => {
+    for (const item of items) {
+      insert.run(kind, item.ref_id, JSON.stringify(item.vector), (/* @__PURE__ */ new Date()).toISOString());
+    }
+  });
+  tx();
+}
+function missingRows(kind) {
+  const db2 = getDb();
+  if (kind === "session") {
+    const rows2 = db2.prepare(`
+      SELECT s.id as ref_id, s.title,
+             (SELECT group_concat(original, ' ') FROM (
+                SELECT original FROM segments WHERE session_id = s.id ORDER BY position LIMIT 12
+             )) as excerpt
+      FROM sessions s
+      WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.kind = 'session' AND e.ref_id = s.id)
+    `).all();
+    return rows2.map((r) => ({ ref_id: r.ref_id, text: `${r.title}
+${r.excerpt || ""}`.slice(0, 4e3) }));
+  }
+  const rows = getDb().prepare(`
+    SELECT q.id as ref_id, q.question_en, q.question_th
+    FROM speaking_questions q
+    WHERE NOT EXISTS (SELECT 1 FROM embeddings e WHERE e.kind = 'speaking_question' AND e.ref_id = q.id)
+  `).all();
+  return rows.map((r) => ({ ref_id: r.ref_id, text: `${r.question_en}
+${r.question_th || ""}` }));
+}
+async function ensureEmbeddings(kind) {
+  const missing = missingRows(kind);
+  if (missing.length === 0) return;
+  log.info(`Embedding ${missing.length} ${kind} rows for vector search`);
+  for (let i = 0; i < missing.length; i += 20) {
+    const batch = missing.slice(i, i + 20);
+    const vectors = await ollamaEmbed(batch.map((b) => b.text));
+    storeEmbeddings(kind, batch.map((b, j) => ({ ref_id: b.ref_id, vector: vectors[j] })));
+  }
+}
+function cosine(a, b) {
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom > 0 ? dot / denom : 0;
+}
+async function vectorSearchIds(kind, query) {
+  await ensureEmbeddings(kind);
+  const [queryVector] = await ollamaEmbed([query]);
+  const rows = getDb().prepare("SELECT ref_id, vector FROM embeddings WHERE kind = ?").all(kind);
+  return rows.map((row) => ({ ref_id: row.ref_id, score: cosine(queryVector, JSON.parse(row.vector)) })).sort((a, b) => b.score - a.score).map((r) => r.ref_id);
+}
 function registerSessionHandlers() {
-  electron.ipcMain.handle("session:list", () => {
+  electron.ipcMain.handle("session:list", async (_e, opts) => {
     const db2 = getDb();
-    return db2.prepare(
+    const query = (opts?.query || "").trim();
+    const page = Math.max(1, opts?.page || 1);
+    const pageSize = Math.max(1, Math.min(50, opts?.pageSize || 10));
+    const all = db2.prepare(
       `SELECT s.*, src.type as source_type, src.url, src.thumbnail,
                 (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.session_id = s.id) as exam_attempt_count,
                 EXISTS(SELECT 1 FROM session_quizzes sq WHERE sq.session_id = s.id) as has_exam
@@ -359,6 +555,21 @@ function registerSessionHandlers() {
          LEFT JOIN sources src ON s.source_id = src.id
          ORDER BY s.created_at DESC`
     ).all();
+    let filtered = all;
+    if (query) {
+      try {
+        const ranked = await vectorSearchIds("session", query);
+        const position = new Map(ranked.map((id, index) => [id, index]));
+        filtered = all.filter((row) => position.has(row.id)).sort((a, b) => position.get(a.id) - position.get(b.id)).slice(0, 20);
+      } catch (err) {
+        log.warn("Vector search unavailable, falling back to substring match:", err);
+        const q = query.toLowerCase();
+        filtered = all.filter((row) => String(row.title || "").toLowerCase().includes(q));
+      }
+    }
+    const total = filtered.length;
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    return { items, total, page, pageSize };
   });
   electron.ipcMain.handle("session:get", (_e, sessionId) => {
     const db2 = getDb();
@@ -596,51 +807,6 @@ async function fetchYtMetadata(url) {
     proc.on("error", (e) => reject(new Error(`yt-dlp not found: ${e.message}`)));
   });
 }
-async function downloadYtVideo(url, outputDir, onProgress) {
-  const outTemplate = path.join(outputDir, "yt_vid_%(id)s.%(ext)s");
-  return new Promise((resolve, reject) => {
-    onProgress?.("Downloading video from YouTube...");
-    log.info("[yt-dlp video] Starting download:", url);
-    const proc = child_process.spawn(YTDLP_PATH, [
-      "-f",
-      "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[ext=mp4]/best",
-      "--merge-output-format",
-      "mp4",
-      "--ffmpeg-location",
-      FFMPEG_PATH,
-      "--extractor-args",
-      "youtube:player_client=android,ios",
-      "--no-playlist",
-      "--no-mtime",
-      "-o",
-      outTemplate,
-      "--print",
-      "after_move:filepath",
-      url
-    ], { env: CHILD_ENV });
-    let lastLine = "";
-    let err = "";
-    proc.stdout.on("data", (d) => {
-      const line = d.toString().trim();
-      if (line) {
-        lastLine = line;
-        log.info("[yt-dlp video] stdout:", line);
-      }
-    });
-    proc.stderr.on("data", (d) => {
-      const msg = d.toString();
-      err += msg;
-      const pct = msg.match(/(\d+\.?\d*)%/);
-      if (pct) onProgress?.(`Downloading video: ${parseFloat(pct[1]).toFixed(0)}%`);
-    });
-    proc.on("close", (code) => {
-      if (code === 0 && lastLine) resolve(lastLine.trim());
-      else if (code === 0) reject(new Error("yt-dlp video: no output path received"));
-      else reject(new Error(`yt-dlp video failed (code ${code}): ${err.slice(-400)}`));
-    });
-    proc.on("error", (e) => reject(new Error(`Cannot run yt-dlp: ${e.message}`)));
-  });
-}
 async function downloadYtAudio(url, outputDir, onProgress) {
   const outTemplate = path.join(outputDir, "yt_%(id)s.%(ext)s");
   return new Promise((resolve, reject) => {
@@ -696,84 +862,6 @@ async function downloadYtAudio(url, outputDir, onProgress) {
     proc.on("error", (e) => reject(new Error(`Cannot run yt-dlp (${YTDLP_PATH}): ${e.message}`)));
   });
 }
-function baseUrl() {
-  return getSetting("ollama_base_url") || "http://localhost:11434";
-}
-async function ollamaGenerate(model, prompt, options) {
-  const url = `${baseUrl()}/api/generate`;
-  const body = {
-    model,
-    prompt,
-    stream: false,
-    options: {
-      temperature: options?.temperature ?? 0.3,
-      num_ctx: options?.num_ctx ?? 4096
-    }
-  };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error(`Ollama error: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return data.response.trim();
-}
-async function ollamaChat(model, messages, options) {
-  const url = `${baseUrl()}/api/chat`;
-  const body = {
-    model,
-    messages,
-    stream: false,
-    options: {
-      temperature: options?.temperature,
-      num_ctx: options?.num_ctx
-    },
-    think: false
-  };
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  });
-  if (!res.ok) throw new Error(`Ollama chat error: ${res.status} ${await res.text()}`);
-  const data = await res.json();
-  return data.message.content.trim();
-}
-async function listModels() {
-  try {
-    const res = await fetch(`${baseUrl()}/api/tags`);
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.models.map((m) => m.name);
-  } catch {
-    return [];
-  }
-}
-function extractJSON(text) {
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-  const start = Math.min(
-    text.indexOf("[") === -1 ? Infinity : text.indexOf("["),
-    text.indexOf("{") === -1 ? Infinity : text.indexOf("{")
-  );
-  if (start === Infinity) throw new Error("No JSON found");
-  const openChar = text[start];
-  const closeChar = openChar === "[" ? "]" : "}";
-  let depth = 0;
-  let end = -1;
-  for (let i = start; i < text.length; i++) {
-    if (text[i] === openChar) depth++;
-    else if (text[i] === closeChar) {
-      depth--;
-      if (depth === 0) {
-        end = i;
-        break;
-      }
-    }
-  }
-  if (end === -1) throw new Error("Unmatched JSON");
-  return text.slice(start, end + 1);
-}
 const GEMINI_DEFAULTS = {
   analysis: "gemini-3.1-flash-lite",
   translate: "gemini-3.1-flash-lite",
@@ -809,19 +897,6 @@ function buildGeminiGenerateBody(prompt, options) {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
     generationConfig: { temperature: options?.temperature ?? 0.3 }
   };
-}
-function buildGeminiChatBody(messages, options) {
-  const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
-  const contents = messages.filter((m) => m.role !== "system").map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }]
-  }));
-  const body = {
-    contents,
-    generationConfig: { temperature: options?.temperature }
-  };
-  if (system) body.systemInstruction = { parts: [{ text: system }] };
-  return body;
 }
 function buildGeminiTtsBody(text, voice = "Kore") {
   return {
@@ -894,10 +969,6 @@ async function geminiGenerate(model, prompt, options) {
   const json = await callGemini(model, buildGeminiGenerateBody(prompt, options));
   return parseGeminiText(json);
 }
-async function geminiChat(model, messages, options) {
-  const json = await callGemini(model, buildGeminiChatBody(messages, options));
-  return parseGeminiText(json);
-}
 async function geminiTts(model, text, voice = "Kore") {
   const json = await callGemini(model, buildGeminiTtsBody(text, voice));
   const { base64, mimeType } = parseGeminiAudio(json);
@@ -916,13 +987,6 @@ async function aiGenerate(role, prompt, options) {
     return geminiGenerate(route.model, prompt, { temperature: options?.temperature });
   }
   return ollamaGenerate(route.model, prompt, options);
-}
-async function aiChat(role, messages, options) {
-  const route = resolveRoute(role, getSetting);
-  if (route.provider === "gemini") {
-    return geminiChat(route.model, messages, { temperature: options?.temperature });
-  }
-  return ollamaChat(route.model, messages, options);
 }
 async function translateOne(seg) {
   const prompt = `Translate to Thai. Reply with ONLY the Thai translation, no explanation, no markdown.
@@ -1160,32 +1224,12 @@ function registerImportHandlers(getWindow2) {
     try {
       sendProgress(win, "metadata", "Fetching YouTube metadata...", 5);
       const meta = await fetchYtMetadata(url);
-      let localMediaPath;
-      let whisperAudioPath;
-      try {
-        sendProgress(win, "download", "Downloading video (≤480p)...", 10);
-        const videoPath = await downloadYtVideo(
-          url,
-          mediaDir,
-          (msg) => sendProgress(win, "download", msg, 25)
-        );
-        localMediaPath = videoPath;
-        sendProgress(win, "extract", "Extracting audio for transcription...", 30);
-        whisperAudioPath = await extractAudio(
-          videoPath,
-          mediaDir,
-          (msg) => sendProgress(win, "extract", msg, 35)
-        );
-      } catch (videoErr) {
-        log.warn("[YouTube import] Video download failed, falling back to audio-only:", videoErr);
-        sendProgress(win, "download", "Downloading audio (video unavailable)...", 10);
-        whisperAudioPath = await downloadYtAudio(
-          url,
-          mediaDir,
-          (msg) => sendProgress(win, "download", msg, 30)
-        );
-        localMediaPath = whisperAudioPath;
-      }
+      sendProgress(win, "download", "Downloading audio for transcription...", 10);
+      const whisperAudioPath = await downloadYtAudio(
+        url,
+        mediaDir,
+        (msg) => sendProgress(win, "download", msg, 25)
+      );
       sendProgress(win, "transcribe", "Transcribing with Whisper...", 38);
       const whisperResult = await transcribeAudio(
         whisperAudioPath,
@@ -1195,11 +1239,16 @@ function registerImportHandlers(getWindow2) {
       const segments = segmentizeTranscript(whisperResult);
       const translations = await runTranslation(segments, win, 70);
       sendProgress(win, "saving", "Saving session...", 90);
+      try {
+        if (fs.existsSync(whisperAudioPath)) fs.unlinkSync(whisperAudioPath);
+      } catch (cleanupErr) {
+        log.warn("Could not delete temp YouTube audio:", cleanupErr);
+      }
       const sourceId = `src_${uuid.v4()}`;
       const sessionId = `ses_${uuid.v4()}`;
       db2.prepare(
         "INSERT INTO sources (id, type, title, url, local_media_path, thumbnail, duration_seconds, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-      ).run(sourceId, "youtube", meta.title, url, localMediaPath, meta.thumbnail || "", meta.duration || 0, (/* @__PURE__ */ new Date()).toISOString());
+      ).run(sourceId, "youtube", meta.title, url, "", meta.thumbnail || "", meta.duration || 0, (/* @__PURE__ */ new Date()).toISOString());
       db2.prepare(
         "INSERT INTO sessions (id, source_id, title, created_at, total_segments) VALUES (?, ?, ?, ?, ?)"
       ).run(sessionId, sourceId, meta.title, (/* @__PURE__ */ new Date()).toISOString(), segments.length);
@@ -1684,6 +1733,7 @@ function registerDashboardHandlers() {
           SELECT date(created_at) as day, COUNT(*) as c FROM practice_attempts GROUP BY day
           UNION ALL SELECT date(reviewed_at) as day, COUNT(*) as c FROM review_history GROUP BY day
           UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM speaking_answers GROUP BY day
+          UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM grammar_practice_history GROUP BY day
           UNION ALL SELECT date(completed_at) as day, COUNT(*) as c FROM quiz_attempts GROUP BY day
         )
         WHERE day IS NOT NULL
@@ -1755,7 +1805,8 @@ function registerSettingsHandlers() {
       "gemini_analysis_model",
       "gemini_translate_model",
       "gemini_tts_model",
-      "gemini_tts_voice"
+      "gemini_tts_voice",
+      "grammar_daily_count"
     ];
     const result = {};
     for (const k of keys) {
@@ -2052,7 +2103,7 @@ function registerExamHandlers(getWindow2) {
     return rows.map((row) => ({ ...row, tags: JSON.parse(row.tags || "[]") }));
   });
 }
-function clampScore(value) {
+function clampScore$1(value) {
   const n = typeof value === "number" ? value : parseFloat(String(value));
   if (Number.isNaN(n)) return 0;
   return Math.max(0, Math.min(100, Math.round(n)));
@@ -2125,7 +2176,7 @@ Return ONLY strict JSON, no markdown:
       const parsed = JSON.parse(extractJSON(raw));
       return {
         evaluation: {
-          score: clampScore(parsed.score),
+          score: clampScore$1(parsed.score),
           grammar_ok: Boolean(parsed.grammar_ok),
           feedback_th: typeof parsed.feedback_th === "string" ? parsed.feedback_th : "",
           corrected_sentence: typeof parsed.corrected_sentence === "string" ? parsed.corrected_sentence : "",
@@ -2230,8 +2281,11 @@ function registerSpeakingHandlers(getWindow2) {
   electron.ipcMain.handle("speaking:answers", (_event, questionId) => {
     return getDb().prepare("SELECT * FROM speaking_answers WHERE question_id = ? ORDER BY created_at DESC").all(questionId);
   });
-  electron.ipcMain.handle("speaking:history", () => {
-    return getDb().prepare(`
+  electron.ipcMain.handle("speaking:history", async (_e, opts) => {
+    const query = (opts?.query || "").trim();
+    const page = Math.max(1, opts?.page || 1);
+    const pageSize = Math.max(1, Math.min(50, opts?.pageSize || 10));
+    const all = getDb().prepare(`
       SELECT q.id, q.session_id, q.question_en, q.question_th, q.batch_id, q.created_at,
              s.title as session_title,
              COUNT(a.id) as answer_count,
@@ -2243,42 +2297,233 @@ function registerSpeakingHandlers(getWindow2) {
       GROUP BY q.id
       ORDER BY q.created_at DESC, q.position ASC
     `).all();
+    let filtered = all;
+    if (query) {
+      try {
+        const ranked = await vectorSearchIds("speaking_question", query);
+        const position = new Map(ranked.map((id, index) => [id, index]));
+        filtered = all.filter((row) => position.has(row.id)).sort((a, b) => position.get(a.id) - position.get(b.id)).slice(0, 30);
+      } catch (err) {
+        log.warn("Vector search unavailable, falling back to substring match:", err);
+        const q = query.toLowerCase();
+        filtered = all.filter(
+          (row) => `${row.question_en} ${row.question_th || ""} ${row.session_title}`.toLowerCase().includes(q)
+        );
+      }
+    }
+    const total = filtered.length;
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize);
+    return { items, total, page, pageSize };
   });
 }
-function registerGrammarHandlers() {
-  electron.ipcMain.handle("grammar:chat", async (_e, grammarId, messages) => {
-    const db2 = getDb();
-    const grammar = db2.prepare("SELECT id, name, pattern, explanation_th, examples FROM grammar_items WHERE id = ?").get(grammarId);
-    if (!grammar) throw new Error("Grammar topic not found");
-    if (messages.filter((m) => m.role === "user").length <= 1) {
-      db2.prepare("UPDATE grammar_items SET review_count = review_count + 1, last_seen_at = ? WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), grammarId);
-    }
-    let examples = "";
-    try {
-      const parsed = JSON.parse(grammar.examples || "[]");
-      examples = parsed.map((ex) => `- ${ex.original}${ex.translate ? ` (${ex.translate})` : ""}`).join("\n");
-    } catch {
-      examples = "";
-    }
-    const system = `You are a friendly English tutor coaching a Thai learner to actively USE this grammar topic in speech:
-
-Topic: ${grammar.name}
+function clampScore(value) {
+  const n = typeof value === "number" ? value : parseFloat(String(value));
+  if (Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+function grammarContext(grammar) {
+  let examples = "";
+  try {
+    const parsed = JSON.parse(grammar.examples || "[]");
+    examples = parsed.map((ex) => `- ${ex.original}`).join("\n");
+  } catch {
+  }
+  return `Grammar topic: ${grammar.name}
 ${grammar.pattern ? `Pattern: ${grammar.pattern}` : ""}
 ${grammar.explanation_th ? `Thai explanation: ${grammar.explanation_th}` : ""}
 ${examples ? `Examples:
-${examples}` : ""}
+${examples}` : ""}`;
+}
+async function normalizeGrammar(text) {
+  const prompt = `A Thai learner of English pasted notes about a grammar point they studied elsewhere. Identify the grammar topic and produce a clean library entry.
 
-Coaching rules:
-- Explain briefly in Thai, but all example sentences and challenges are in English.
-- Each turn: give ONE short situation or question that forces the learner to answer in English using this grammar.
-- When the learner answers, first say whether the grammar was used correctly. If wrong, show the corrected sentence and explain the fix in 1-2 Thai sentences. Then give the next challenge.
-- Keep every reply under 130 words. Never answer the challenge for the learner. Do not use markdown tables.`;
-    const reply = await aiChat(
-      "analysis",
-      [{ role: "system", content: system }, ...messages],
-      { temperature: 0.5, num_ctx: 8192 }
+Learner's notes:
+${text.slice(0, 4e3)}
+
+Return ONLY strict JSON, no markdown:
+{
+  "name": "concise English name of the grammar topic (e.g. 'Present Perfect for life experience')",
+  "pattern": "short formula, e.g. 'have/has + V3'",
+  "explanation_th": "2-3 sentence explanation in Thai of what it means and when to use it",
+  "examples": [
+    {"original": "English example sentence", "translate": "Thai translation"},
+    {"original": "...", "translate": "..."}
+  ]
+}
+Give 2-3 examples.`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.3, num_ctx: 8192 });
+      const parsed = JSON.parse(extractJSON(raw));
+      const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+      if (!name) throw new Error("Model returned no grammar name");
+      return {
+        name,
+        pattern: typeof parsed.pattern === "string" ? parsed.pattern.trim() : "",
+        explanation_th: typeof parsed.explanation_th === "string" ? parsed.explanation_th.trim() : "",
+        examples: Array.isArray(parsed.examples) ? parsed.examples.filter((ex) => ex && typeof ex.original === "string").map((ex) => ({ original: ex.original.trim(), translate: (ex.translate || "").trim() })) : []
+      };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Grammar normalize attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to process the grammar notes");
+}
+async function generateGrammarQuestion(grammar, avoid) {
+  const prompt = `You coach a Thai learner of English to actively USE this grammar in speech:
+
+${grammarContext(grammar)}
+
+Create ONE short situation or question (under 25 words, conversational) that the learner must answer by speaking 1-2 English sentences USING this grammar.
+${avoid.length > 0 ? `Do not repeat these previous challenges:
+${avoid.slice(0, 8).map((a) => `- ${a}`).join("\n")}` : ""}
+question_th is a natural Thai translation.
+
+Return ONLY strict JSON, no markdown:
+{"question_en": "...", "question_th": "..."}`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.7, num_ctx: 8192 });
+      const parsed = JSON.parse(extractJSON(raw));
+      const questionEn = typeof parsed.question_en === "string" ? parsed.question_en.trim() : "";
+      if (!questionEn) throw new Error("Model returned no question");
+      return {
+        question_en: questionEn,
+        question_th: typeof parsed.question_th === "string" ? parsed.question_th.trim() : ""
+      };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Grammar question attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to generate a grammar challenge");
+}
+async function evaluateGrammarAnswer(data) {
+  const prompt = `You are an English grammar coach for a Thai learner. The learner answered a challenge by voice; the transcript below comes from speech-to-text (do not penalize punctuation or capitalization).
+
+${grammarContext(data.grammar)}
+
+Challenge: ${data.question}
+Learner's spoken answer: ${data.transcript}
+
+Evaluate:
+- used_target: did the answer actually use the target grammar above?
+- grammar_ok: is the sentence grammatically correct with natural word order?
+- score: 0-100 (target grammar usage 40%, overall grammar 40%, naturalness 20%).
+- feedback_th: 1-3 Thai sentences explaining what was right/wrong, especially about the target grammar.
+- corrected_sentence: the learner's answer fixed (English). If already correct, repeat it.
+- suggested_answer: one natural answer a fluent speaker might say that uses the target grammar (English).
+
+Return ONLY strict JSON, no markdown:
+{
+  "score": 0,
+  "grammar_ok": true,
+  "used_target": true,
+  "feedback_th": "...",
+  "corrected_sentence": "...",
+  "suggested_answer": "..."
+}`;
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.2, num_ctx: 8192 });
+      const parsed = JSON.parse(extractJSON(raw));
+      return {
+        score: clampScore(parsed.score),
+        grammar_ok: Boolean(parsed.grammar_ok),
+        used_target: Boolean(parsed.used_target),
+        feedback_th: typeof parsed.feedback_th === "string" ? parsed.feedback_th : "",
+        corrected_sentence: typeof parsed.corrected_sentence === "string" ? parsed.corrected_sentence : "",
+        suggested_answer: typeof parsed.suggested_answer === "string" ? parsed.suggested_answer : ""
+      };
+    } catch (error) {
+      lastError = error;
+      log.warn(`Grammar evaluation attempt ${attempt} failed:`, error);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Unable to evaluate the answer");
+}
+function getGrammar(grammarId) {
+  const row = getDb().prepare("SELECT id, name, pattern, explanation_th, examples, source_sessions FROM grammar_items WHERE id = ?").get(grammarId);
+  if (!row) throw new Error("Grammar topic not found");
+  return row;
+}
+function registerGrammarHandlers() {
+  electron.ipcMain.handle("grammar:add", async (_e, text) => {
+    if (!text.trim()) throw new Error("Empty grammar notes");
+    const db2 = getDb();
+    const normalized = await normalizeGrammar(text);
+    const existing = db2.prepare("SELECT id FROM grammar_items WHERE name = ? COLLATE NOCASE").get(normalized.name);
+    if (existing) {
+      db2.prepare("UPDATE grammar_items SET pattern = ?, explanation_th = ?, examples = ?, last_seen_at = ? WHERE id = ?").run(normalized.pattern, normalized.explanation_th, JSON.stringify(normalized.examples), (/* @__PURE__ */ new Date()).toISOString(), existing.id);
+      return { id: existing.id, merged: true, name: normalized.name };
+    }
+    const id = `grm_${uuid.v4()}`;
+    db2.prepare(
+      "INSERT INTO grammar_items (id, name, pattern, explanation_th, examples, last_seen_at, source_sessions) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    ).run(id, normalized.name, normalized.pattern, normalized.explanation_th, JSON.stringify(normalized.examples), (/* @__PURE__ */ new Date()).toISOString(), "[]");
+    return { id, merged: false, name: normalized.name };
+  });
+  electron.ipcMain.handle("grammar:delete", (_e, grammarId) => {
+    getDb().prepare("DELETE FROM grammar_items WHERE id = ?").run(grammarId);
+    return true;
+  });
+  electron.ipcMain.handle("grammar:daily-due", () => {
+    const db2 = getDb();
+    const count = Math.max(1, parseInt(getSetting("grammar_daily_count") || "4", 10) || 4);
+    const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+    const all = db2.prepare("SELECT * FROM grammar_items").all();
+    const picked = all.map((g) => ({ g, key: crypto.createHash("md5").update(`${today}:${g.id}`).digest("hex") })).sort((a, b) => a.key.localeCompare(b.key)).slice(0, count).map(({ g }) => g);
+    const practicedToday = new Set(
+      db2.prepare("SELECT DISTINCT grammar_id FROM grammar_practice_history WHERE date(created_at) = date('now')").all().map((r) => r.grammar_id)
     );
-    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() };
+    return picked.map((g) => ({ ...g, practiced_today: practicedToday.has(g.id) }));
+  });
+  electron.ipcMain.handle("grammar:practice:question", async (_e, grammarId) => {
+    const grammar = getGrammar(grammarId);
+    const recent = getDb().prepare("SELECT DISTINCT question FROM grammar_practice_history WHERE grammar_id = ? ORDER BY created_at DESC LIMIT 8").all(grammarId).map((r) => r.question);
+    return generateGrammarQuestion(grammar, recent);
+  });
+  electron.ipcMain.handle("grammar:practice:evaluate", async (_e, grammarId, question, transcript, audioPath) => {
+    if (!transcript.trim()) throw new Error("Empty answer transcript");
+    const grammar = getGrammar(grammarId);
+    const evaluation = await evaluateGrammarAnswer({ grammar, question, transcript: transcript.trim() });
+    const db2 = getDb();
+    const id = `gpa_${uuid.v4()}`;
+    db2.prepare(`
+      INSERT INTO grammar_practice_history
+        (id, grammar_id, question, transcript, audio_path, score, grammar_ok, used_target, feedback_th, suggested_answer, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      grammarId,
+      question,
+      transcript.trim(),
+      audioPath || null,
+      evaluation.score,
+      evaluation.grammar_ok ? 1 : 0,
+      evaluation.used_target ? 1 : 0,
+      evaluation.feedback_th,
+      JSON.stringify({ corrected: evaluation.corrected_sentence, suggested: evaluation.suggested_answer }),
+      (/* @__PURE__ */ new Date()).toISOString()
+    );
+    db2.prepare("UPDATE grammar_items SET review_count = review_count + 1, last_seen_at = ? WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), grammarId);
+    return { attemptId: id, ...evaluation };
+  });
+  electron.ipcMain.handle("grammar:practice:history", (_e, grammarId) => {
+    const db2 = getDb();
+    if (grammarId) {
+      return db2.prepare("SELECT * FROM grammar_practice_history WHERE grammar_id = ? ORDER BY created_at DESC LIMIT 100").all(grammarId);
+    }
+    return db2.prepare(`
+      SELECT h.*, g.name as grammar_name
+      FROM grammar_practice_history h
+      JOIN grammar_items g ON g.id = h.grammar_id
+      ORDER BY h.created_at DESC LIMIT 200
+    `).all();
   });
 }
 const EXPORT_DB_NAME = "daily-speaking-export.db";
@@ -2487,11 +2732,17 @@ function createWindow() {
 }
 electron.app.whenReady().then(() => {
   electronApp.setAppUserModelId("com.dailyspeaking.app");
+  const ytFilter = { urls: ["*://*.youtube.com/*", "*://*.youtube-nocookie.com/*", "*://*.googlevideo.com/*"] };
+  electron.session.defaultSession.webRequest.onBeforeSendHeaders(ytFilter, (details, callback) => {
+    details.requestHeaders["Referer"] = "https://app.dailyspeaking.local/";
+    callback({ requestHeaders: details.requestHeaders });
+  });
   electron.app.on("browser-window-created", (_, window) => {
     optimizer.watchWindowShortcuts(window);
   });
   try {
     initDatabase();
+    migrateYoutubeToStream();
   } catch (err) {
     log.error("Database init failed:", err);
     electron.dialog.showErrorBox("Database Error", String(err));

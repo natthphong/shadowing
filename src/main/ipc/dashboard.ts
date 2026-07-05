@@ -58,6 +58,7 @@ export function registerDashboardHandlers(): void {
           SELECT date(created_at) as day, COUNT(*) as c FROM practice_attempts GROUP BY day
           UNION ALL SELECT date(reviewed_at) as day, COUNT(*) as c FROM review_history GROUP BY day
           UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM speaking_answers GROUP BY day
+          UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM grammar_practice_history GROUP BY day
           UNION ALL SELECT date(completed_at) as day, COUNT(*) as c FROM quiz_attempts GROUP BY day
         )
         WHERE day IS NOT NULL

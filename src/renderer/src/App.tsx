@@ -10,7 +10,7 @@ import Exam from './pages/Exam'
 import ExamHistory from './pages/ExamHistory'
 import SpeakingPractice from './pages/SpeakingPractice'
 
-const APP_VERSION = '0.0.14'
+const APP_VERSION = '0.0.15'
 
 export default function App(): JSX.Element {
   return (

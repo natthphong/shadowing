@@ -1,10 +1,16 @@
 import { ipcMain } from 'electron'
+import log from 'electron-log'
 import { getDb } from '../services/database'
+import { vectorSearchIds } from '../services/embeddings'
 
 export function registerSessionHandlers(): void {
-  ipcMain.handle('session:list', () => {
+  ipcMain.handle('session:list', async (_e, opts?: { query?: string; page?: number; pageSize?: number }) => {
     const db = getDb()
-    return db
+    const query = (opts?.query || '').trim()
+    const page = Math.max(1, opts?.page || 1)
+    const pageSize = Math.max(1, Math.min(50, opts?.pageSize || 10))
+
+    const all = db
       .prepare(
         `SELECT s.*, src.type as source_type, src.url, src.thumbnail,
                 (SELECT COUNT(*) FROM quiz_attempts qa WHERE qa.session_id = s.id) as exam_attempt_count,
@@ -13,7 +19,28 @@ export function registerSessionHandlers(): void {
          LEFT JOIN sources src ON s.source_id = src.id
          ORDER BY s.created_at DESC`
       )
-      .all()
+      .all() as Record<string, unknown>[]
+
+    let filtered = all
+    if (query) {
+      try {
+        // Semantic search over title + transcript excerpt (bge-m3)
+        const ranked = await vectorSearchIds('session', query)
+        const position = new Map(ranked.map((id, index) => [id, index]))
+        filtered = all
+          .filter((row) => position.has(row.id as string))
+          .sort((a, b) => position.get(a.id as string)! - position.get(b.id as string)!)
+          .slice(0, 20)
+      } catch (err) {
+        log.warn('Vector search unavailable, falling back to substring match:', err)
+        const q = query.toLowerCase()
+        filtered = all.filter((row) => String(row.title || '').toLowerCase().includes(q))
+      }
+    }
+
+    const total = filtered.length
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize)
+    return { items, total, page, pageSize }
   })
 
   ipcMain.handle('session:get', (_e, sessionId: string) => {

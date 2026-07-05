@@ -4,6 +4,7 @@ import log from 'electron-log'
 import { getDb } from '../services/database'
 import { generateSpeakingQuestions, evaluateSpeakingAnswer } from '../services/speaking'
 import { transcribeAudio } from '../services/whisper'
+import { vectorSearchIds } from '../services/embeddings'
 
 type QuestionRow = {
   id: string
@@ -118,9 +119,14 @@ export function registerSpeakingHandlers(getWindow: () => BrowserWindow | null):
       .all(questionId)
   })
 
-  // Question history across sessions, with answer stats
-  ipcMain.handle('speaking:history', () => {
-    return getDb().prepare(`
+  // Question history across sessions, with answer stats.
+  // Supports semantic (vector) search + pagination.
+  ipcMain.handle('speaking:history', async (_e, opts?: { query?: string; page?: number; pageSize?: number }) => {
+    const query = (opts?.query || '').trim()
+    const page = Math.max(1, opts?.page || 1)
+    const pageSize = Math.max(1, Math.min(50, opts?.pageSize || 10))
+
+    const all = getDb().prepare(`
       SELECT q.id, q.session_id, q.question_en, q.question_th, q.batch_id, q.created_at,
              s.title as session_title,
              COUNT(a.id) as answer_count,
@@ -131,6 +137,28 @@ export function registerSpeakingHandlers(getWindow: () => BrowserWindow | null):
       LEFT JOIN speaking_answers a ON a.question_id = q.id
       GROUP BY q.id
       ORDER BY q.created_at DESC, q.position ASC
-    `).all()
+    `).all() as Record<string, unknown>[]
+
+    let filtered = all
+    if (query) {
+      try {
+        const ranked = await vectorSearchIds('speaking_question', query)
+        const position = new Map(ranked.map((id, index) => [id, index]))
+        filtered = all
+          .filter((row) => position.has(row.id as string))
+          .sort((a, b) => position.get(a.id as string)! - position.get(b.id as string)!)
+          .slice(0, 30)
+      } catch (err) {
+        log.warn('Vector search unavailable, falling back to substring match:', err)
+        const q = query.toLowerCase()
+        filtered = all.filter((row) =>
+          `${row.question_en} ${row.question_th || ''} ${row.session_title}`.toLowerCase().includes(q)
+        )
+      }
+    }
+
+    const total = filtered.length
+    const items = filtered.slice((page - 1) * pageSize, page * pageSize)
+    return { items, total, page, pageSize }
   })
 }
