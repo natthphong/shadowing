@@ -1,6 +1,5 @@
 import log from 'electron-log'
-import { getSetting } from './database'
-import { ollamaGenerate } from './ollama'
+import { aiGenerate, routeFor } from './ai'
 import { GeneratedExam, parseGeneratedExam } from './examUtils'
 
 export async function generateExamQuiz(data: {
@@ -8,7 +7,7 @@ export async function generateExamQuiz(data: {
   segments: { position: number; original: string; translate: string }[]
   questionCount?: number
 }): Promise<{ exam: GeneratedExam; model: string }> {
-  const model = getSetting('analysis_model') || 'qwen3.6:27b'
+  const { model } = routeFor('analysis')
   const questionCount = Math.max(5, Math.min(10, data.questionCount ?? 7))
   const transcript = data.segments
     .map((segment) => `${segment.position + 1}. ${segment.original}${segment.translate ? `\nThai: ${segment.translate}` : ''}`)
@@ -48,7 +47,7 @@ Return ONLY strict JSON with this shape, without markdown or commentary:
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 16384 })
+      const raw = await aiGenerate('analysis', prompt, { temperature: 0.2, num_ctx: 16384 })
       return { exam: parseGeneratedExam(raw), model }
     } catch (error) {
       lastError = error

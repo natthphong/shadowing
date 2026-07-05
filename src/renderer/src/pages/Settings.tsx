@@ -174,6 +174,68 @@ export default function Settings(): JSX.Element {
             </div>
           </section>
 
+          {/* Gemini provider */}
+          <section className="p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4">
+            <h2 className="font-bold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>cloud</span>
+              Gemini Provider (Cloud)
+            </h2>
+            <p className="text-sm text-on-surface-variant">
+              Optionally serve AI features from Google Gemini instead of local models. Everything stays local by default — a role only switches to Gemini when you select it below <em>and</em> an API key is set. If the key is missing or a Gemini call fails, the app falls back to the local model.
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-on-surface">Gemini API Key</label>
+              <input
+                type="password"
+                value={settings['gemini_api_key'] || ''}
+                onChange={(e) => setSettings((s) => ({ ...s, gemini_api_key: e.target.value }))}
+                placeholder="AIza..."
+                data-testid="gemini-api-key"
+                className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+              />
+              <p className="text-xs text-on-surface-variant">Get a key from Google AI Studio. Stored locally in SQLite only.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {([
+                { key: 'analysis_provider', label: 'Analysis / Speaking Q&A / Grammar' },
+                { key: 'translate_provider', label: 'Translation' },
+                { key: 'tts_provider', label: 'AI Voice (TTS)' }
+              ] as const).map(({ key, label }) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <label className="text-sm font-semibold text-on-surface">{label}</label>
+                  <select
+                    value={settings[key] || 'local'}
+                    onChange={(e) => setSettings((s) => ({ ...s, [key]: e.target.value }))}
+                    data-testid={key}
+                    className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white text-sm outline-none focus:border-primary"
+                  >
+                    <option value="local">Local (default)</option>
+                    <option value="gemini">Gemini</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <Field
+              label="Gemini Analysis Model"
+              settingKey="gemini_analysis_model"
+              placeholder="gemini-3.1-flash-lite"
+              hint="Used for post-session analysis, exams, Speaking Q&A, and grammar practice when set to Gemini."
+            />
+            <Field
+              label="Gemini Translation Model"
+              settingKey="gemini_translate_model"
+              placeholder="gemini-3.1-flash-lite"
+            />
+            <Field
+              label="Gemini TTS Model"
+              settingKey="gemini_tts_model"
+              placeholder="gemini-3.1-flash-tts-preview"
+              hint="Gemini voice is cached separately from the local Orpheus voice."
+            />
+          </section>
+
           {/* Practice */}
           <section className="p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4">
             <h2 className="font-bold text-on-surface flex items-center gap-2">

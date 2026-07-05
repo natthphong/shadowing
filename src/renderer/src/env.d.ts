@@ -64,7 +64,7 @@ interface Window {
     }
     grammar: {
       list: () => Promise<unknown[]>
-      chat: (grammarId: string, messages: { role: string; content: string }[]) => Promise<{ reply: string; model: string }>
+      chat: (grammarId: string, messages: { role: string; content: string }[]) => Promise<{ reply: string }>
     }
     vocabulary: {
       list: () => Promise<unknown[]>

@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron'
-import { interactiveTranslate } from '../services/ollama'
+import { interactiveTranslate } from '../services/ai'
 import { getDb } from '../services/database'
 
 export function registerTranslateHandlers(): void {

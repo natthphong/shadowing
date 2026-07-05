@@ -24,7 +24,8 @@ Daily Speaking is a local-first macOS desktop app for English shadowing and spea
 - AI-generated 5/7/10-question comprehension exams with tags, saved attempts, answer review, and unlimited retakes
 - **Daily streak and 12-week activity heatmap** on the Dashboard, counting practice, flashcard reviews, speaking answers, and exams
 - **Export All / Import All** — back up the entire app (database, media, recordings, voice cache) to one zip and restore it on another Mac; media paths are relinked automatically so you continue where you left off
-- Local SQLite storage; no cloud account required
+- **Optional Gemini cloud provider** — per-feature switches in Settings let analysis/Speaking Q&A/grammar practice (`gemini-3.1-flash-lite`), translation (`gemini-3.1-flash-lite`), and AI voice (`gemini-3.1-flash-tts-preview`) run on Google Gemini instead of local models; everything defaults to local, and the app falls back to the local model if the key is missing or a call fails
+- Local SQLite storage; no cloud account required (a Gemini API key is needed only if you opt into the Gemini provider)
 
 The current release version is shown in the bottom-right corner of the app.
 
@@ -118,6 +119,7 @@ To install it, open the DMG and drag **Daily Speaking** into **Applications**. T
 6. **Speak** — Speaking Q&A generates open-ended questions from a finished session. Your spoken answer is transcribed by Whisper and graded by the analysis model for grammar and word order, with a corrected sentence and a suggested natural answer. Every attempt is saved to the My Answers history and counted on the Dashboard.
 7. **Grammar coaching** — the Grammar Library's Practice button opens a chat where the AI tutor teaches the topic in Thai and drills you with English challenges, correcting each response.
 8. **Backup & move machines** — Settings → Data Backup exports the database plus all media into a single zip; importing that zip on another Mac restores everything and relinks file paths automatically.
+9. **Choose your AI provider** — Settings → Gemini Provider stores a Google API key and offers three independent switches (Analysis/Speaking/Grammar, Translation, AI Voice). Local Ollama/Whisper remains the default; Gemini is used only when a switch is set *and* a key is present, with automatic local fallback on errors, so offline use keeps working.
 
 ## Architecture
 
@@ -125,7 +127,8 @@ To install it, open the DMG and drag **Daily Speaking** into **Applications**. T
 Electron main process
 ├── SQLite and filesystem (plus zip export/import of all data)
 ├── FFmpeg / yt-dlp / Whisper
-├── Ollama translation, analysis, TTS, exam and speaking-question generation
+├── Provider-routed AI: Ollama (default, local) or Google Gemini (optional)
+│   for translation, analysis, TTS, exams, and speaking questions
 └── IPC handlers
     └── React renderer (Dashboard, Sessions, Practice, Flashcards, Speaking Q&A, Grammar, Exams)
 ```

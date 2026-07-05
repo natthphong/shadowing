@@ -6,7 +6,7 @@ import log from 'electron-log'
 import { getDb, getRecordingsDir, getSetting } from '../services/database'
 import { transcribeAudio } from '../services/whisper'
 import { scoreAttempt } from '../services/scoring'
-import { analyzeSession } from '../services/ollama'
+import { analyzeSession } from '../services/ai'
 
 export function registerPracticeHandlers(getWindow: () => BrowserWindow | null): void {
   // Save a raw audio buffer (base64) to recordings directory, return file path

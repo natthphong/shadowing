@@ -205,6 +205,14 @@ export function initDatabase(): void {
     INSERT OR IGNORE INTO settings VALUES ('low_score_threshold', '70');
     INSERT OR IGNORE INTO settings VALUES ('translate_workers', '2');
     INSERT OR IGNORE INTO settings VALUES ('max_due_cards', '30');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_api_key', '');
+    INSERT OR IGNORE INTO settings VALUES ('analysis_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('translate_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('tts_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_analysis_model', 'gemini-3.1-flash-lite');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_translate_model', 'gemini-3.1-flash-lite');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_tts_model', 'gemini-3.1-flash-tts-preview');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_tts_voice', 'Kore');
   `)
 
   log.info('Database initialized')

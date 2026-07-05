@@ -1,6 +1,6 @@
 import log from 'electron-log'
-import { getSetting } from './database'
-import { ollamaGenerate, extractJSON } from './ollama'
+import { extractJSON } from './ollama'
+import { aiGenerate, routeFor } from './ai'
 
 export interface GeneratedSpeakingQuestion {
   question_en: string
@@ -26,7 +26,7 @@ export async function generateSpeakingQuestions(data: {
   segments: { position: number; original: string }[]
   questionCount: number
 }): Promise<{ questions: GeneratedSpeakingQuestion[]; model: string }> {
-  const model = getSetting('analysis_model') || 'qwen3.6:27b'
+  const { model } = routeFor('analysis')
   const count = Math.max(3, Math.min(15, data.questionCount))
   const transcript = data.segments
     .map((segment) => `${segment.position + 1}. ${segment.original}`)
@@ -53,7 +53,7 @@ Return ONLY strict JSON, no markdown, no commentary:
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.4, num_ctx: 16384 })
+      const raw = await aiGenerate('analysis', prompt, { temperature: 0.4, num_ctx: 16384 })
       const parsed = JSON.parse(extractJSON(raw)) as GeneratedSpeakingQuestion[]
       const questions = parsed
         .filter((q) => q && typeof q.question_en === 'string' && q.question_en.trim().length > 0)
@@ -76,7 +76,7 @@ export async function evaluateSpeakingAnswer(data: {
   question: string
   transcript: string
 }): Promise<{ evaluation: SpeakingEvaluation; model: string }> {
-  const model = getSetting('analysis_model') || 'qwen3.6:27b'
+  const { model } = routeFor('analysis')
   const prompt = `You are an English speaking coach for a Thai learner. The learner heard a question and answered by voice; the answer below is a speech-to-text transcript (punctuation may be missing — do not penalize punctuation or capitalization).
 
 Question: ${data.question}
@@ -102,7 +102,7 @@ Return ONLY strict JSON, no markdown:
   let lastError: unknown
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 8192 })
+      const raw = await aiGenerate('analysis', prompt, { temperature: 0.2, num_ctx: 8192 })
       const parsed = JSON.parse(extractJSON(raw)) as Record<string, unknown>
       return {
         evaluation: {

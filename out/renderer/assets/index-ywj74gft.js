@@ -11423,6 +11423,78 @@ function Settings() {
       ] }),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { className: "font-bold text-on-surface flex items-center gap-2", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary", style: { fontVariationSettings: "'FILL' 1" }, children: "cloud" }),
+          "Gemini Provider (Cloud)"
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("p", { className: "text-sm text-on-surface-variant", children: [
+          "Optionally serve AI features from Google Gemini instead of local models. Everything stays local by default — a role only switches to Gemini when you select it below ",
+          /* @__PURE__ */ jsxRuntimeExports.jsx("em", { children: "and" }),
+          " an API key is set. If the key is missing or a Gemini call fails, the app falls back to the local model."
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-sm font-semibold text-on-surface", children: "Gemini API Key" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "input",
+            {
+              type: "password",
+              value: settings["gemini_api_key"] || "",
+              onChange: (e) => setSettings((s) => ({ ...s, gemini_api_key: e.target.value })),
+              placeholder: "AIza...",
+              "data-testid": "gemini-api-key",
+              className: "px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "text-xs text-on-surface-variant", children: "Get a key from Google AI Studio. Stored locally in SQLite only." })
+        ] }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid grid-cols-1 md:grid-cols-3 gap-4", children: [
+          { key: "analysis_provider", label: "Analysis / Speaking Q&A / Grammar" },
+          { key: "translate_provider", label: "Translation" },
+          { key: "tts_provider", label: "AI Voice (TTS)" }
+        ].map(({ key, label }) => /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col gap-1.5", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("label", { className: "text-sm font-semibold text-on-surface", children: label }),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "select",
+            {
+              value: settings[key] || "local",
+              onChange: (e) => setSettings((s) => ({ ...s, [key]: e.target.value })),
+              "data-testid": key,
+              className: "px-4 py-2.5 rounded-xl border border-outline-variant bg-white text-sm outline-none focus:border-primary",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "local", children: "Local (default)" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("option", { value: "gemini", children: "Gemini" })
+              ]
+            }
+          )
+        ] }, key)) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Field,
+          {
+            label: "Gemini Analysis Model",
+            settingKey: "gemini_analysis_model",
+            placeholder: "gemini-3.1-flash-lite",
+            hint: "Used for post-session analysis, exams, Speaking Q&A, and grammar practice when set to Gemini."
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Field,
+          {
+            label: "Gemini Translation Model",
+            settingKey: "gemini_translate_model",
+            placeholder: "gemini-3.1-flash-lite"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          Field,
+          {
+            label: "Gemini TTS Model",
+            settingKey: "gemini_tts_model",
+            placeholder: "gemini-3.1-flash-tts-preview",
+            hint: "Gemini voice is cached separately from the local Orpheus voice."
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("h2", { className: "font-bold text-on-surface flex items-center gap-2", children: [
           /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "material-symbols-outlined text-primary", style: { fontVariationSettings: "'FILL' 1" }, children: "tune" }),
           "Practice Settings"
         ] }),
@@ -12438,7 +12510,7 @@ function SpeakingPractice() {
     ) : null })
   ] });
 }
-const APP_VERSION = "0.0.13";
+const APP_VERSION = "0.0.14";
 function App() {
   return /* @__PURE__ */ jsxRuntimeExports.jsx(HashRouter, { children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex h-screen overflow-hidden bg-surface text-on-surface relative", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx(Sidebar, {}),

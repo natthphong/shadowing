@@ -298,6 +298,14 @@ function initDatabase() {
     INSERT OR IGNORE INTO settings VALUES ('low_score_threshold', '70');
     INSERT OR IGNORE INTO settings VALUES ('translate_workers', '2');
     INSERT OR IGNORE INTO settings VALUES ('max_due_cards', '30');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_api_key', '');
+    INSERT OR IGNORE INTO settings VALUES ('analysis_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('translate_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('tts_provider', 'local');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_analysis_model', 'gemini-3.1-flash-lite');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_translate_model', 'gemini-3.1-flash-lite');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_tts_model', 'gemini-3.1-flash-tts-preview');
+    INSERT OR IGNORE INTO settings VALUES ('gemini_tts_voice', 'Kore');
   `);
   log.info("Database initialized");
 }
@@ -742,106 +750,6 @@ async function listModels() {
     return [];
   }
 }
-async function translateOne(seg, model) {
-  const prompt = `Translate to Thai. Reply with ONLY the Thai translation, no explanation, no markdown.
-
-${seg.original}
-
-Thai:`;
-  try {
-    const raw = await ollamaGenerate(model, prompt, { temperature: 0.1 });
-    const translation = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^Thai:\s*/i, "").trim();
-    return { ...seg, translate: translation };
-  } catch (e) {
-    log.warn(`Segment translate failed (${seg.id}):`, e);
-    return { ...seg, translate: "" };
-  }
-}
-async function bulkTranslateSegments(segments, onProgress) {
-  const model = getSetting("bulk_translate_model") || "scb10x/typhoon-translate1.5-4b";
-  const workerCount = Math.max(1, parseInt(getSetting("translate_workers") || "2", 10));
-  const chunkSize = Math.ceil(segments.length / workerCount);
-  const chunks = [];
-  for (let i = 0; i < segments.length; i += chunkSize) {
-    chunks.push(segments.slice(i, i + chunkSize));
-  }
-  log.info(`Translating ${segments.length} segments with ${chunks.length} workers, model: ${model}`);
-  let done = 0;
-  const total = segments.length;
-  const chunkResults = await Promise.all(
-    chunks.map(async (chunk, wi) => {
-      const results = [];
-      for (const seg of chunk) {
-        const r = await translateOne(seg, model);
-        results.push(r);
-        done++;
-        log.info(`Worker ${wi + 1}: translated ${done}/${total} — "${r.translate.slice(0, 30)}"`);
-        onProgress?.(done, total);
-      }
-      return results;
-    })
-  );
-  return chunkResults.flat();
-}
-async function interactiveTranslate(text) {
-  const key = text.trim().toLowerCase();
-  const cached = getCachedTranslation(key);
-  if (cached) {
-    log.info("Translation cache hit:", key.slice(0, 40));
-    return cached;
-  }
-  const model = getSetting("interactive_translate_model") || "scb10x/typhoon-translate1.5-4b";
-  const prompt = `Translate this English text to Thai. Reply with ONLY the Thai translation, nothing else.
-
-Text: ${text}
-
-Thai:`;
-  const result = await ollamaGenerate(model, prompt, { temperature: 0.2 });
-  const translation = result.replace(/^Thai:\s*/i, "").trim();
-  setCachedTranslation(key, translation);
-  return translation;
-}
-async function analyzeSession(data) {
-  const model = getSetting("analysis_model") || "qwen3.6:27b";
-  const prompt = `You are an English language coach analyzing a student's shadowing practice session.
-
-Session data:
-${JSON.stringify(data, null, 2)}
-
-Analyze the session and return ONLY valid JSON with this structure (no markdown, no thinking):
-{
-  "summary": {
-    "overall_feedback": "...",
-    "main_weaknesses": ["...", "..."]
-  },
-  "sentences_to_review": [
-    {"sentence_id": "...", "original": "...", "translate": "...", "reason": "...", "priority": "high|medium|low"}
-  ],
-  "words_to_practice": [
-    {"word": "...", "translate": "...", "reason": "...", "priority": "high|medium|low"}
-  ],
-  "grammar_items": [
-    {"name": "...", "pattern": "...", "explanation_th": "...", "examples": [{"original": "...", "translate": "..."}]}
-  ]
-}`;
-  let attempt = 0;
-  while (attempt < 3) {
-    try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 16384 });
-      const jsonStr = extractJSON(raw);
-      return JSON.parse(jsonStr);
-    } catch (e) {
-      log.warn(`Analysis attempt ${attempt + 1} failed:`, e);
-      attempt++;
-    }
-  }
-  return {
-    summary: { overall_feedback: "Analysis not available", main_weaknesses: [] },
-    sentences_to_review: [],
-    words_to_practice: [],
-    grammar_items: []
-  };
-}
 function extractJSON(text) {
   text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   const start = Math.min(
@@ -866,17 +774,281 @@ function extractJSON(text) {
   if (end === -1) throw new Error("Unmatched JSON");
   return text.slice(start, end + 1);
 }
+const GEMINI_DEFAULTS = {
+  analysis: "gemini-3.1-flash-lite",
+  translate: "gemini-3.1-flash-lite",
+  tts: "gemini-3.1-flash-tts-preview"
+};
+const PROVIDER_KEYS = {
+  analysis: "analysis_provider",
+  translate: "translate_provider",
+  tts: "tts_provider"
+};
+const GEMINI_MODEL_KEYS = {
+  analysis: "gemini_analysis_model",
+  translate: "gemini_translate_model",
+  tts: "gemini_tts_model"
+};
+const LOCAL_MODEL_KEYS = {
+  analysis: { key: "analysis_model", fallback: "qwen3.6:27b" },
+  translate: { key: "interactive_translate_model", fallback: "scb10x/typhoon-translate1.5-4b" },
+  tts: { key: "tts_model", fallback: "legraphista/Orpheus:latest" }
+};
+function resolveRoute(role, get) {
+  const provider = (get(PROVIDER_KEYS[role]) || "local").trim();
+  const apiKey = (get("gemini_api_key") || "").trim();
+  if (provider === "gemini" && apiKey) {
+    const model = (get(GEMINI_MODEL_KEYS[role]) || "").trim() || GEMINI_DEFAULTS[role];
+    return { provider: "gemini", model };
+  }
+  const local = LOCAL_MODEL_KEYS[role];
+  return { provider: "local", model: (get(local.key) || "").trim() || local.fallback };
+}
+function buildGeminiGenerateBody(prompt, options) {
+  return {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { temperature: options?.temperature ?? 0.3 }
+  };
+}
+function buildGeminiChatBody(messages, options) {
+  const system = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+  const contents = messages.filter((m) => m.role !== "system").map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: m.content }]
+  }));
+  const body = {
+    contents,
+    generationConfig: { temperature: options?.temperature }
+  };
+  if (system) body.systemInstruction = { parts: [{ text: system }] };
+  return body;
+}
+function buildGeminiTtsBody(text, voice = "Kore") {
+  return {
+    contents: [{ role: "user", parts: [{ text }] }],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
+    }
+  };
+}
+function parseGeminiText(json) {
+  const data = json;
+  if (data.error?.message) throw new Error(`Gemini error: ${data.error.message}`);
+  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("").trim();
+  if (!text) throw new Error("Gemini returned no text");
+  return text;
+}
+function parseGeminiAudio(json) {
+  const data = json;
+  if (data.error?.message) throw new Error(`Gemini error: ${data.error.message}`);
+  const part = data.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data);
+  if (!part?.inlineData?.data) throw new Error("Gemini returned no audio");
+  return { base64: part.inlineData.data, mimeType: part.inlineData.mimeType || "audio/pcm" };
+}
+function sampleRateFromMime(mimeType) {
+  const match = /rate=(\d+)/.exec(mimeType);
+  return match ? parseInt(match[1], 10) : 24e3;
+}
+function pcmToWav(pcm, sampleRate = 24e3) {
+  const channels = 1;
+  const bitsPerSample = 16;
+  const byteRate = sampleRate * channels * bitsPerSample / 8;
+  const blockAlign = channels * bitsPerSample / 8;
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+async function callGemini(model, body) {
+  const apiKey = (getSetting("gemini_api_key") || "").trim();
+  if (!apiKey) throw new Error("Gemini API key is not configured");
+  const res = await fetch(`${BASE_URL}/${encodeURIComponent(model)}:generateContent`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": apiKey
+    },
+    body: JSON.stringify(body)
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = json?.error?.message;
+    throw new Error(`Gemini HTTP ${res.status}: ${message || "request failed"}`);
+  }
+  return json;
+}
+async function geminiGenerate(model, prompt, options) {
+  const json = await callGemini(model, buildGeminiGenerateBody(prompt, options));
+  return parseGeminiText(json);
+}
+async function geminiChat(model, messages, options) {
+  const json = await callGemini(model, buildGeminiChatBody(messages, options));
+  return parseGeminiText(json);
+}
+async function geminiTts(model, text, voice = "Kore") {
+  const json = await callGemini(model, buildGeminiTtsBody(text, voice));
+  const { base64, mimeType } = parseGeminiAudio(json);
+  const pcm = Buffer.from(base64, "base64");
+  if (/wav|x-wav/.test(mimeType)) return pcm;
+  const wav = pcmToWav(pcm, sampleRateFromMime(mimeType));
+  log.info(`Gemini TTS: ${pcm.length} bytes PCM (${mimeType}) → wav`);
+  return wav;
+}
+function routeFor(role) {
+  return resolveRoute(role, getSetting);
+}
+async function aiGenerate(role, prompt, options) {
+  const route = resolveRoute(role, getSetting);
+  if (route.provider === "gemini") {
+    return geminiGenerate(route.model, prompt, { temperature: options?.temperature });
+  }
+  return ollamaGenerate(route.model, prompt, options);
+}
+async function aiChat(role, messages, options) {
+  const route = resolveRoute(role, getSetting);
+  if (route.provider === "gemini") {
+    return geminiChat(route.model, messages, { temperature: options?.temperature });
+  }
+  return ollamaChat(route.model, messages, options);
+}
+async function translateOne(seg) {
+  const prompt = `Translate to Thai. Reply with ONLY the Thai translation, no explanation, no markdown.
+
+${seg.original}
+
+Thai:`;
+  try {
+    const raw = await aiGenerate("translate", prompt, { temperature: 0.1 });
+    const translation = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^Thai:\s*/i, "").trim();
+    return { ...seg, translate: translation };
+  } catch (e) {
+    log.warn(`Segment translate failed (${seg.id}):`, e);
+    return { ...seg, translate: "" };
+  }
+}
+async function bulkTranslateSegments(segments, onProgress) {
+  const route = resolveRoute("translate", getSetting);
+  const workerCount = Math.max(1, parseInt(getSetting("translate_workers") || "2", 10));
+  const chunkSize = Math.ceil(segments.length / workerCount);
+  const chunks = [];
+  for (let i = 0; i < segments.length; i += chunkSize) {
+    chunks.push(segments.slice(i, i + chunkSize));
+  }
+  log.info(`Translating ${segments.length} segments with ${chunks.length} workers via ${route.provider} (${route.model})`);
+  let done = 0;
+  const total = segments.length;
+  const chunkResults = await Promise.all(
+    chunks.map(async (chunk, wi) => {
+      const results = [];
+      for (const seg of chunk) {
+        const r = await translateOne(seg);
+        results.push(r);
+        done++;
+        log.info(`Worker ${wi + 1}: translated ${done}/${total} — "${r.translate.slice(0, 30)}"`);
+        onProgress?.(done, total);
+      }
+      return results;
+    })
+  );
+  return chunkResults.flat();
+}
+async function interactiveTranslate(text) {
+  const key = text.trim().toLowerCase();
+  const cached = getCachedTranslation(key);
+  if (cached) {
+    log.info("Translation cache hit:", key.slice(0, 40));
+    return cached;
+  }
+  const prompt = `Translate this English text to Thai. Reply with ONLY the Thai translation, nothing else.
+
+Text: ${text}
+
+Thai:`;
+  const result = await aiGenerate("translate", prompt, { temperature: 0.2 });
+  const translation = result.replace(/^Thai:\s*/i, "").trim();
+  setCachedTranslation(key, translation);
+  return translation;
+}
+async function analyzeSession(data) {
+  const prompt = `You are an English language coach analyzing a student's shadowing practice session.
+
+Session data:
+${JSON.stringify(data, null, 2)}
+
+Analyze the session and return ONLY valid JSON with this structure (no markdown, no thinking):
+{
+  "summary": {
+    "overall_feedback": "...",
+    "main_weaknesses": ["...", "..."]
+  },
+  "sentences_to_review": [
+    {"sentence_id": "...", "original": "...", "translate": "...", "reason": "...", "priority": "high|medium|low"}
+  ],
+  "words_to_practice": [
+    {"word": "...", "translate": "...", "reason": "...", "priority": "high|medium|low"}
+  ],
+  "grammar_items": [
+    {"name": "...", "pattern": "...", "explanation_th": "...", "examples": [{"original": "...", "translate": "..."}]}
+  ]
+}`;
+  let attempt = 0;
+  while (attempt < 3) {
+    try {
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.2, num_ctx: 16384 });
+      const jsonStr = extractJSON(raw);
+      return JSON.parse(jsonStr);
+    } catch (e) {
+      log.warn(`Analysis attempt ${attempt + 1} failed:`, e);
+      attempt++;
+    }
+  }
+  return {
+    summary: { overall_feedback: "Analysis not available", main_weaknesses: [] },
+    sentences_to_review: [],
+    words_to_practice: [],
+    grammar_items: []
+  };
+}
 function getTtsScriptPath() {
   if (electron.app.isPackaged) {
     return path.join(process.resourcesPath, "tts_generate.py");
   }
   return path.join(__dirname, "../../resources/tts_generate.py");
 }
-function textToCachePath(text) {
+function textToCachePath(text, suffix = "") {
   const hash = crypto.createHash("md5").update(text.trim().toLowerCase()).digest("hex");
-  return path.join(getTtsCacheDir(), `${hash}.wav`);
+  return path.join(getTtsCacheDir(), `${hash}${suffix}.wav`);
 }
 async function generateTts(text, voice = "tara") {
+  const route = resolveRoute("tts", getSetting);
+  if (route.provider === "gemini") {
+    const geminiCachePath = textToCachePath(text, "_gemini");
+    if (fs.existsSync(geminiCachePath) && fs.statSync(geminiCachePath).size > 0) {
+      log.info("TTS cache hit (gemini):", geminiCachePath);
+      return geminiCachePath;
+    }
+    try {
+      const wav = await geminiTts(route.model, text, getSetting("gemini_tts_voice") || "Kore");
+      fs.writeFileSync(geminiCachePath, wav);
+      log.info("TTS done (gemini):", geminiCachePath);
+      return geminiCachePath;
+    } catch (err) {
+      log.warn("Gemini TTS failed, falling back to local voice:", err);
+    }
+  }
   const cachePath = textToCachePath(text);
   if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 0) {
     log.info("TTS cache hit:", cachePath);
@@ -1575,7 +1747,15 @@ function registerSettingsHandlers() {
       "tts_model",
       "low_score_threshold",
       "translate_workers",
-      "max_due_cards"
+      "max_due_cards",
+      "gemini_api_key",
+      "analysis_provider",
+      "translate_provider",
+      "tts_provider",
+      "gemini_analysis_model",
+      "gemini_translate_model",
+      "gemini_tts_model",
+      "gemini_tts_voice"
     ];
     const result = {};
     for (const k of keys) {
@@ -1700,7 +1880,7 @@ function gradeExam(questions, answers) {
   return { correctCount, totalQuestions, score };
 }
 async function generateExamQuiz(data) {
-  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const { model } = routeFor("analysis");
   const questionCount = Math.max(5, Math.min(10, data.questionCount ?? 7));
   const transcript = data.segments.map((segment) => `${segment.position + 1}. ${segment.original}${segment.translate ? `
 Thai: ${segment.translate}` : ""}`).join("\n").slice(0, 24e3);
@@ -1736,7 +1916,7 @@ Return ONLY strict JSON with this shape, without markdown or commentary:
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 16384 });
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.2, num_ctx: 16384 });
       return { exam: parseGeneratedExam(raw), model };
     } catch (error) {
       lastError = error;
@@ -1878,7 +2058,7 @@ function clampScore(value) {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 async function generateSpeakingQuestions(data) {
-  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const { model } = routeFor("analysis");
   const count = Math.max(3, Math.min(15, data.questionCount));
   const transcript = data.segments.map((segment) => `${segment.position + 1}. ${segment.original}`).join("\n").slice(0, 2e4);
   const prompt = `You create speaking-practice questions for a Thai learner of English who just studied this clip.
@@ -1900,7 +2080,7 @@ Return ONLY strict JSON, no markdown, no commentary:
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.4, num_ctx: 16384 });
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.4, num_ctx: 16384 });
       const parsed = JSON.parse(extractJSON(raw));
       const questions = parsed.filter((q) => q && typeof q.question_en === "string" && q.question_en.trim().length > 0).slice(0, count).map((q) => ({
         question_en: q.question_en.trim(),
@@ -1916,7 +2096,7 @@ Return ONLY strict JSON, no markdown, no commentary:
   throw lastError instanceof Error ? lastError : new Error("Unable to generate speaking questions");
 }
 async function evaluateSpeakingAnswer(data) {
-  const model = getSetting("analysis_model") || "qwen3.6:27b";
+  const { model } = routeFor("analysis");
   const prompt = `You are an English speaking coach for a Thai learner. The learner heard a question and answered by voice; the answer below is a speech-to-text transcript (punctuation may be missing — do not penalize punctuation or capitalization).
 
 Question: ${data.question}
@@ -1941,7 +2121,7 @@ Return ONLY strict JSON, no markdown:
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const raw = await ollamaGenerate(model, prompt, { temperature: 0.2, num_ctx: 8192 });
+      const raw = await aiGenerate("analysis", prompt, { temperature: 0.2, num_ctx: 8192 });
       const parsed = JSON.parse(extractJSON(raw));
       return {
         evaluation: {
@@ -2093,13 +2273,12 @@ Coaching rules:
 - Each turn: give ONE short situation or question that forces the learner to answer in English using this grammar.
 - When the learner answers, first say whether the grammar was used correctly. If wrong, show the corrected sentence and explain the fix in 1-2 Thai sentences. Then give the next challenge.
 - Keep every reply under 130 words. Never answer the challenge for the learner. Do not use markdown tables.`;
-    const model = getSetting("analysis_model") || "qwen3.6:27b";
-    const reply = await ollamaChat(
-      model,
+    const reply = await aiChat(
+      "analysis",
       [{ role: "system", content: system }, ...messages],
       { temperature: 0.5, num_ctx: 8192 }
     );
-    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(), model };
+    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim() };
   });
 }
 const EXPORT_DB_NAME = "daily-speaking-export.db";

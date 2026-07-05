@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
-import { getDb, getSetting } from '../services/database'
-import { ollamaChat } from '../services/ollama'
+import { getDb } from '../services/database'
+import { aiChat } from '../services/ai'
 
 type GrammarRow = {
   id: string
@@ -45,12 +45,11 @@ Coaching rules:
 - When the learner answers, first say whether the grammar was used correctly. If wrong, show the corrected sentence and explain the fix in 1-2 Thai sentences. Then give the next challenge.
 - Keep every reply under 130 words. Never answer the challenge for the learner. Do not use markdown tables.`
 
-    const model = getSetting('analysis_model') || 'qwen3.6:27b'
-    const reply = await ollamaChat(
-      model,
+    const reply = await aiChat(
+      'analysis',
       [{ role: 'system', content: system }, ...messages],
       { temperature: 0.5, num_ctx: 8192 }
     )
-    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim(), model }
+    return { reply: reply.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() }
   })
 }
