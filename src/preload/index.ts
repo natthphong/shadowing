@@ -36,8 +36,9 @@ const api = {
     analyzeSession: (sessionId: string) =>
       ipcRenderer.invoke('practice:session-analyze', sessionId),
     onAnalysisProgress: (cb: (data: { status: string; msg: string }) => void) => {
-      ipcRenderer.on('analysis:progress', (_e, data) => cb(data))
-      return () => ipcRenderer.removeAllListeners('analysis:progress')
+      const listener = (_event: Electron.IpcRendererEvent, data: { status: string; msg: string }): void => cb(data)
+      ipcRenderer.on('analysis:progress', listener)
+      return () => ipcRenderer.removeListener('analysis:progress', listener)
     }
   },
 
@@ -57,6 +58,20 @@ const api = {
     exists: (front: string) => ipcRenderer.invoke('flashcard:exists', front),
     delete: (id: string) => ipcRenderer.invoke('flashcard:delete', id),
     stats: () => ipcRenderer.invoke('flashcard:stats')
+  },
+
+  // Post-session exams
+  exam: {
+    getForSession: (sessionId: string) => ipcRenderer.invoke('exam:session:get', sessionId),
+    generate: (sessionId: string, questionCount = 7) => ipcRenderer.invoke('exam:generate', sessionId, questionCount),
+    submit: (quizId: string, answers: Array<number | null>) => ipcRenderer.invoke('exam:submit', quizId, answers),
+    getAttempt: (attemptId: string) => ipcRenderer.invoke('exam:attempt:get', attemptId),
+    history: () => ipcRenderer.invoke('exam:history'),
+    onProgress: (cb: (data: { status: string; msg: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { status: string; msg: string }): void => cb(data)
+      ipcRenderer.on('exam:progress', listener)
+      return () => ipcRenderer.removeListener('exam:progress', listener)
+    }
   },
 
   // Dashboard

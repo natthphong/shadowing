@@ -22,6 +22,8 @@ export interface Session {
   url?: string
   thumbnail?: string
   local_media_path?: string
+  exam_attempt_count?: number
+  has_exam?: number | boolean
 }
 
 export interface WordTimestamp {
@@ -125,4 +127,54 @@ export interface ScoreResult {
   incorrect_words: string[]
   extra_words: string[]
   feedback_text: string
+}
+
+export interface ExamQuestion {
+  id: string
+  question: string
+  options: string[]
+  tag: string
+}
+
+export interface ExamQuiz {
+  id: string
+  session_id: string
+  title: string
+  tags: string[]
+  model?: string
+  created_at: string
+  questions: ExamQuestion[]
+}
+
+export interface ExamAttemptSummary {
+  id: string
+  quiz_id: string
+  session_id: string
+  correct_count: number
+  total_questions: number
+  score: number
+  completed_at: string
+}
+
+export interface ExamSessionData {
+  quiz: ExamQuiz | null
+  attempts: ExamAttemptSummary[]
+}
+
+export interface ExamReviewQuestion extends ExamQuestion {
+  correctIndex: number
+  explanation: string
+  selectedIndex: number | null
+  isCorrect: boolean
+}
+
+export interface ExamReview {
+  attempt: ExamAttemptSummary
+  quiz: Omit<ExamQuiz, 'questions'> & { questions: ExamReviewQuestion[] }
+}
+
+export interface ExamHistoryEntry extends ExamAttemptSummary {
+  session_title: string
+  quiz_title: string
+  tags: string[]
 }

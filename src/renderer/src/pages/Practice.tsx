@@ -53,6 +53,7 @@ export default function Practice(): JSX.Element {
 
   // Analysis
   const [analyzing, setAnalyzing] = useState(false)
+  const [analysisProgress, setAnalysisProgress] = useState('Preparing session analysis...')
   const [analysisResult, setAnalysisResult] = useState<Record<string, unknown> | null>(null)
   const [showAnalysis, setShowAnalysis] = useState(false)
 
@@ -150,8 +151,22 @@ export default function Practice(): JSX.Element {
   useEffect(() => {
     if (sessionId && segments.length > 0) {
       localStorage.setItem(`progress_${sessionId}`, String(currentIdx))
+
+      const maxKey = `progress_max_${sessionId}`
+      const previousMax = Number.parseInt(localStorage.getItem(maxKey) || '-1', 10)
+      const maxIndex = Math.max(Number.isNaN(previousMax) ? -1 : previousMax, currentIdx)
+      localStorage.setItem(maxKey, String(maxIndex))
+      const completion = Math.min(100, Math.round(((maxIndex + 1) / segments.length) * 100))
+      void window.api.sessions.updateProgress(sessionId, {
+        completion_percentage: completion,
+        ...(completion >= 100 ? { completed_at: new Date().toISOString() } : {})
+      })
     }
   }, [currentIdx, sessionId, segments.length])
+
+  useEffect(() => window.api.practice.onAnalysisProgress((progress) => {
+    setAnalysisProgress(progress.msg)
+  }), [])
 
   // Autoplay when segment changes
   useEffect(() => {
@@ -463,6 +478,7 @@ export default function Practice(): JSX.Element {
   // ── Analysis ──────────────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
     if (!sessionId) return
+    setAnalysisProgress('Preparing session analysis...')
     setAnalyzing(true)
     try {
       setAnalysisResult(
@@ -479,8 +495,21 @@ export default function Practice(): JSX.Element {
   const scoreColor = (score: number): string =>
     score >= 85 ? 'text-tertiary' : score >= 65 ? 'text-[#f59e0b]' : 'text-error'
 
-  const completedCount = lastAttempts.length > 0 ? currentIdx + 1 : currentIdx
+  const completedCount = currentIdx + 1
   const completionPct = segments.length > 0 ? Math.round((completedCount / segments.length) * 100) : 0
+
+  const finishSession = useCallback(async () => {
+    if (!sessionId) return
+    const maxIndex = Number.parseInt(localStorage.getItem(`progress_max_${sessionId}`) || String(currentIdx), 10)
+    const completion = segments.length > 0
+      ? Math.min(100, Math.round(((Math.max(currentIdx, maxIndex) + 1) / segments.length) * 100))
+      : 0
+    await window.api.sessions.updateProgress(sessionId, {
+      completion_percentage: completion,
+      ...(completion >= 100 ? { completed_at: new Date().toISOString() } : {})
+    })
+    navigate('/sessions')
+  }, [currentIdx, navigate, segments.length, sessionId])
 
   void recordingPath
 
@@ -576,14 +605,26 @@ export default function Practice(): JSX.Element {
             <button
               onClick={runAnalysis}
               disabled={analyzing}
+              data-testid="analyze-session"
               className="flex items-center gap-1 text-secondary hover:text-primary transition-colors"
               title="Analyze session with AI"
             >
               <span className="material-symbols-outlined text-[20px]">{analyzing ? 'hourglass_empty' : 'analytics'}</span>
             </button>
+            {completionPct >= 100 && (
+              <button
+                onClick={() => navigate(`/exam/${sessionId}`)}
+                data-testid="take-exam"
+                className="flex items-center gap-1.5 bg-tertiary text-white px-4 py-1.5 rounded-lg font-bold text-label-sm active:opacity-80 transition-all"
+                title="Take an AI comprehension exam"
+              >
+                <span className="material-symbols-outlined text-[18px]">quiz</span>
+                Take Exam
+              </button>
+            )}
             <button
-              onClick={() => navigate('/sessions')}
-              className="bg-primary text-on-primary px-4 py-1.5 rounded-lg font-bold text-label-sm active:opacity-80 transition-all"
+              onClick={() => void finishSession()}
+              className={`${completionPct >= 100 ? 'bg-surface-container text-on-surface' : 'bg-primary text-on-primary'} px-4 py-1.5 rounded-lg font-bold text-label-sm active:opacity-80 transition-all`}
             >
               Finish Session
             </button>
@@ -1013,6 +1054,25 @@ export default function Practice(): JSX.Element {
       </nav>
 
       {/* Analysis Modal */}
+      {analyzing && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 backdrop-blur-sm" data-testid="analysis-loading-modal">
+          <div className="w-[440px] max-w-[calc(100vw-2rem)] rounded-3xl bg-white border border-outline-variant shadow-2xl p-8 flex flex-col items-center text-center gap-5">
+            <div className="relative w-16 h-16 rounded-full bg-primary-fixed flex items-center justify-center">
+              <span className="material-symbols-outlined text-3xl text-primary animate-spin">progress_activity</span>
+              <span className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-tertiary text-white flex items-center justify-center material-symbols-outlined text-[14px]">psychology</span>
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-on-surface">Analyzing your session</h2>
+              <p className="mt-2 text-sm text-on-surface-variant">{analysisProgress}</p>
+            </div>
+            <div className="w-full h-1.5 rounded-full bg-surface-container overflow-hidden">
+              <div className="h-full w-1/2 rounded-full bg-primary animate-pulse" />
+            </div>
+            <p className="text-xs text-secondary">The local Post-Session Analysis model may take a minute. Keep this window open.</p>
+          </div>
+        </div>
+      )}
+
       {showAnalysis && analysisResult && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="bg-white rounded-3xl shadow-2xl w-[640px] max-h-[80vh] mx-4 flex flex-col overflow-hidden">

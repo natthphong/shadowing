@@ -11,6 +11,7 @@ import { registerFlashcardHandlers } from './ipc/flashcards'
 import { registerDashboardHandlers } from './ipc/dashboard'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTtsHandlers } from './ipc/tts'
+import { registerExamHandlers } from './ipc/exam'
 
 log.initialize()
 log.transports.file.level = 'info'
@@ -80,6 +81,7 @@ app.whenReady().then(() => {
   registerDashboardHandlers()
   registerSettingsHandlers()
   registerTtsHandlers()
+  registerExamHandlers(getWindow)
 
   createWindow()
 
