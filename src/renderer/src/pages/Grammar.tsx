@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { GrammarItem } from '../types'
+import GrammarPracticeChat from '../components/GrammarPracticeChat'
 
 export default function Grammar(): JSX.Element {
   const [items, setItems] = useState<GrammarItem[]>([])
   const [loading, setLoading] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [practicing, setPracticing] = useState<GrammarItem | null>(null)
 
   useEffect(() => {
     ;(async () => {
@@ -86,6 +88,17 @@ export default function Grammar(): JSX.Element {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-xs text-secondary">{examples.length} examples</span>
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); setPracticing(g) }}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); setPracticing(g) } }}
+                        data-testid="grammar-practice"
+                        className="flex items-center gap-1.5 px-4 py-1.5 bg-primary text-on-primary rounded-lg text-sm font-bold hover:opacity-90 active:scale-95 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-[16px]" style={{ fontVariationSettings: "'FILL' 1" }}>school</span>
+                        Practice
+                      </span>
                       <span className={`material-symbols-outlined text-secondary transition-transform ${isExpanded ? 'rotate-180' : ''}`}>
                         expand_more
                       </span>
@@ -130,6 +143,8 @@ export default function Grammar(): JSX.Element {
           </div>
         )}
       </div>
+
+      {practicing && <GrammarPracticeChat grammar={practicing} onClose={() => setPracticing(null)} />}
     </div>
   )
 }

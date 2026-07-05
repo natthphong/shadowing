@@ -6,7 +6,7 @@ import log from 'electron-log'
 import { getDb, getRecordingsDir, getSetting } from '../services/database'
 import { transcribeAudio } from '../services/whisper'
 import { scoreAttempt } from '../services/scoring'
-import { analyzeSession } from '../services/ollama'
+import { analyzeSession } from '../services/ai'
 
 export function registerPracticeHandlers(getWindow: () => BrowserWindow | null): void {
   // Save a raw audio buffer (base64) to recordings directory, return file path
@@ -170,7 +170,7 @@ export function registerPracticeHandlers(getWindow: () => BrowserWindow | null):
       const tomorrow = new Date(Date.now() + 86400000).toISOString()
       const tx = db.transaction(() => {
         for (const s of lowSegs) {
-          insertCard.run(`card_${uuidv4()}`, 'sentence_speaking', s.translate || s.original, s.original, s.id, sessionId, tomorrow)
+          insertCard.run(`card_${uuidv4()}`, 'sentence_speaking', s.original, s.translate || s.original, s.id, sessionId, tomorrow)
         }
       })
       tx()

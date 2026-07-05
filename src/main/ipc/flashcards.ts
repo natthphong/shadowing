@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../services/database'
+import { getDb, getSetting } from '../services/database'
 
 export function registerFlashcardHandlers(): void {
   ipcMain.handle('flashcard:list', (_e, type?: string) => {
@@ -13,9 +13,10 @@ export function registerFlashcardHandlers(): void {
 
   ipcMain.handle('flashcard:due', () => {
     const now = new Date().toISOString()
+    const maxDue = Math.max(1, parseInt(getSetting('max_due_cards') || '30', 10) || 30)
     return getDb()
-      .prepare('SELECT * FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL ORDER BY next_due_at ASC LIMIT 50')
-      .all(now)
+      .prepare('SELECT * FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL ORDER BY next_due_at ASC LIMIT ?')
+      .all(now, maxDue)
   })
 
   ipcMain.handle('flashcard:review', (_e, cardId: string, rating: 'very_easy' | 'easy' | 'hard' | 'very_hard') => {
@@ -94,12 +95,35 @@ export function registerFlashcardHandlers(): void {
     return true
   })
 
+  ipcMain.handle('flashcard:delete-many', (_e, cardIds: string[]) => {
+    if (!Array.isArray(cardIds) || cardIds.length === 0) return 0
+    const db = getDb()
+    const del = db.prepare('DELETE FROM flashcards WHERE id = ?')
+    const tx = db.transaction((ids: string[]) => {
+      let count = 0
+      for (const id of ids) count += del.run(id).changes
+      return count
+    })
+    return tx(cardIds)
+  })
+
+  ipcMain.handle('flashcard:update', (_e, cardId: string, data: { type?: string; front?: string; back?: string }) => {
+    const db = getDb()
+    const card = db.prepare('SELECT id FROM flashcards WHERE id = ?').get(cardId)
+    if (!card) return false
+    db.prepare('UPDATE flashcards SET type = COALESCE(?, type), front = COALESCE(?, front), back = COALESCE(?, back) WHERE id = ?')
+      .run(data.type ?? null, data.front ?? null, data.back ?? null, cardId)
+    return true
+  })
+
   ipcMain.handle('flashcard:stats', () => {
     const db = getDb()
     const now = new Date().toISOString()
+    const maxDue = Math.max(1, parseInt(getSetting('max_due_cards') || '30', 10) || 30)
     const total = (db.prepare('SELECT COUNT(*) as c FROM flashcards').get() as { c: number }).c
     const due = (db.prepare('SELECT COUNT(*) as c FROM flashcards WHERE next_due_at <= ? OR next_due_at IS NULL').get(now) as { c: number }).c
     const byType = db.prepare('SELECT type, COUNT(*) as c FROM flashcards GROUP BY type').all()
-    return { total, due, byType }
+    // Report the capped queue size so the UI matches what Due Today will actually show
+    return { total, due: Math.min(due, maxDue), totalDue: due, byType }
   })
 }

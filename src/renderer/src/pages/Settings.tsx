@@ -12,6 +12,42 @@ export default function Settings(): JSX.Element {
   const [modelStatus, setModelStatus] = useState<ModelStatus[]>([])
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [dataBusy, setDataBusy] = useState<'export' | 'import' | null>(null)
+  const [dataMsg, setDataMsg] = useState('')
+
+  useEffect(() => window.api.data.onProgress((data) => setDataMsg(data.msg)), [])
+
+  const handleExport = async (): Promise<void> => {
+    setDataBusy('export')
+    setDataMsg('Choosing destination...')
+    try {
+      const result = await window.api.data.exportAll()
+      if (result.canceled) setDataMsg('')
+      else setDataMsg(`Exported to ${result.path} (${((result.sizeBytes || 0) / 1024 / 1024).toFixed(1)} MB)`)
+    } catch (e) {
+      setDataMsg('Export failed: ' + String(e))
+    } finally {
+      setDataBusy(null)
+    }
+  }
+
+  const handleImport = async (): Promise<void> => {
+    setDataBusy('import')
+    setDataMsg('Choosing backup zip...')
+    try {
+      const result = await window.api.data.importAll()
+      if (result.canceled) {
+        setDataMsg('')
+      } else {
+        setDataMsg(`Imported ${result.sessions} sessions, ${result.flashcards} flashcards, ${result.mediaFiles} media files. Reloading...`)
+        setTimeout(() => window.location.reload(), 1500)
+      }
+    } catch (e) {
+      setDataMsg('Import failed: ' + String(e))
+    } finally {
+      setDataBusy(null)
+    }
+  }
 
   useEffect(() => {
     ;(async () => {
@@ -138,6 +174,68 @@ export default function Settings(): JSX.Element {
             </div>
           </section>
 
+          {/* Gemini provider */}
+          <section className="p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4">
+            <h2 className="font-bold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>cloud</span>
+              Gemini Provider (Cloud)
+            </h2>
+            <p className="text-sm text-on-surface-variant">
+              Optionally serve AI features from Google Gemini instead of local models. Everything stays local by default — a role only switches to Gemini when you select it below <em>and</em> an API key is set. If the key is missing or a Gemini call fails, the app falls back to the local model.
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-on-surface">Gemini API Key</label>
+              <input
+                type="password"
+                value={settings['gemini_api_key'] || ''}
+                onChange={(e) => setSettings((s) => ({ ...s, gemini_api_key: e.target.value }))}
+                placeholder="AIza..."
+                data-testid="gemini-api-key"
+                className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary text-sm"
+              />
+              <p className="text-xs text-on-surface-variant">Get a key from Google AI Studio. Stored locally in SQLite only.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {([
+                { key: 'analysis_provider', label: 'Analysis / Speaking Q&A / Grammar' },
+                { key: 'translate_provider', label: 'Translation' },
+                { key: 'tts_provider', label: 'AI Voice (TTS)' }
+              ] as const).map(({ key, label }) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <label className="text-sm font-semibold text-on-surface">{label}</label>
+                  <select
+                    value={settings[key] || 'local'}
+                    onChange={(e) => setSettings((s) => ({ ...s, [key]: e.target.value }))}
+                    data-testid={key}
+                    className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white text-sm outline-none focus:border-primary"
+                  >
+                    <option value="local">Local (default)</option>
+                    <option value="gemini">Gemini</option>
+                  </select>
+                </div>
+              ))}
+            </div>
+
+            <Field
+              label="Gemini Analysis Model"
+              settingKey="gemini_analysis_model"
+              placeholder="gemini-3.1-flash-lite"
+              hint="Used for post-session analysis, exams, Speaking Q&A, and grammar practice when set to Gemini."
+            />
+            <Field
+              label="Gemini Translation Model"
+              settingKey="gemini_translate_model"
+              placeholder="gemini-3.1-flash-lite"
+            />
+            <Field
+              label="Gemini TTS Model"
+              settingKey="gemini_tts_model"
+              placeholder="gemini-3.1-flash-tts-preview"
+              hint="Gemini voice is cached separately from the local Orpheus voice."
+            />
+          </section>
+
           {/* Practice */}
           <section className="p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4">
             <h2 className="font-bold text-on-surface flex items-center gap-2">
@@ -155,6 +253,18 @@ export default function Settings(): JSX.Element {
                 className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary w-32 text-sm"
               />
               <p className="text-xs text-on-surface-variant">Sentences below this score get added to flashcard review</p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-semibold text-on-surface">Maximum Due Cards per Day</label>
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={settings['max_due_cards'] || '30'}
+                onChange={(e) => setSettings((s) => ({ ...s, max_due_cards: e.target.value }))}
+                className="px-4 py-2.5 rounded-xl border border-outline-variant bg-white focus:outline-none focus:border-primary w-32 text-sm"
+              />
+              <p className="text-xs text-on-surface-variant">Caps the Due Today review queue so daily reviews stay manageable</p>
             </div>
             <div className="flex flex-col gap-1.5">
               <label className="text-sm font-semibold text-on-surface">Translation Workers</label>
@@ -189,6 +299,44 @@ export default function Settings(): JSX.Element {
             <p className="text-xs text-on-surface-variant mt-1">
               Run <code className="bg-surface-container px-1 rounded">ollama pull {'{model}'}</code> to install missing models
             </p>
+          </section>
+
+          {/* Data backup */}
+          <section className="p-5 bg-white rounded-2xl border border-outline-variant flex flex-col gap-4">
+            <h2 className="font-bold text-on-surface flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary" style={{ fontVariationSettings: "'FILL' 1" }}>cloud_sync</span>
+              Data Backup &amp; Transfer
+            </h2>
+            <p className="text-sm text-on-surface-variant">
+              Export everything (sessions, transcripts, translations, flashcards, history, media, voice cache) as one zip, then import it on another Mac to keep learning where you left off.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => void handleExport()}
+                disabled={dataBusy !== null}
+                data-testid="export-all"
+                className="px-6 py-2.5 bg-primary text-on-primary rounded-xl font-bold flex items-center gap-2 disabled:opacity-50 active:scale-95 transition-all"
+              >
+                <span className="material-symbols-outlined text-[18px]">{dataBusy === 'export' ? 'hourglass_empty' : 'upload'}</span>
+                {dataBusy === 'export' ? 'Exporting...' : 'Export All'}
+              </button>
+              <button
+                onClick={() => void handleImport()}
+                disabled={dataBusy !== null}
+                data-testid="import-all"
+                className="px-6 py-2.5 bg-surface-container text-on-surface rounded-xl font-bold flex items-center gap-2 disabled:opacity-50 active:scale-95 transition-all"
+              >
+                <span className="material-symbols-outlined text-[18px]">{dataBusy === 'import' ? 'hourglass_empty' : 'download'}</span>
+                {dataBusy === 'import' ? 'Importing...' : 'Import All'}
+              </button>
+            </div>
+            {dataMsg && (
+              <p className="text-xs text-on-surface-variant flex items-center gap-1.5">
+                {dataBusy && <span className="material-symbols-outlined animate-spin text-[14px]">refresh</span>}
+                {dataMsg}
+              </p>
+            )}
+            <p className="text-xs text-error/80">Importing replaces the current database on this machine.</p>
           </section>
 
           {/* Save */}

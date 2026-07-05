@@ -12,6 +12,9 @@ import { registerDashboardHandlers } from './ipc/dashboard'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerTtsHandlers } from './ipc/tts'
 import { registerExamHandlers } from './ipc/exam'
+import { registerSpeakingHandlers } from './ipc/speaking'
+import { registerGrammarHandlers } from './ipc/grammar'
+import { registerDataHandlers } from './ipc/data'
 
 log.initialize()
 log.transports.file.level = 'info'
@@ -82,6 +85,9 @@ app.whenReady().then(() => {
   registerSettingsHandlers()
   registerTtsHandlers()
   registerExamHandlers(getWindow)
+  registerSpeakingHandlers(getWindow)
+  registerGrammarHandlers()
+  registerDataHandlers(getWindow)
 
   createWindow()
 

@@ -57,7 +57,26 @@ const api = {
     create: (data: Record<string, unknown>) => ipcRenderer.invoke('flashcard:create', data),
     exists: (front: string) => ipcRenderer.invoke('flashcard:exists', front),
     delete: (id: string) => ipcRenderer.invoke('flashcard:delete', id),
+    deleteMany: (ids: string[]) => ipcRenderer.invoke('flashcard:delete-many', ids),
+    update: (id: string, data: Record<string, unknown>) => ipcRenderer.invoke('flashcard:update', id, data),
     stats: () => ipcRenderer.invoke('flashcard:stats')
+  },
+
+  // Speaking Q&A practice
+  speaking: {
+    sessions: () => ipcRenderer.invoke('speaking:sessions'),
+    generate: (sessionId: string, questionCount: number) =>
+      ipcRenderer.invoke('speaking:generate', sessionId, questionCount),
+    transcribe: (audioPath: string) => ipcRenderer.invoke('speaking:transcribe', audioPath),
+    evaluate: (questionId: string, transcript: string, audioPath?: string) =>
+      ipcRenderer.invoke('speaking:evaluate', questionId, transcript, audioPath),
+    answers: (questionId: string) => ipcRenderer.invoke('speaking:answers', questionId),
+    history: () => ipcRenderer.invoke('speaking:history'),
+    onProgress: (cb: (data: { status: string; msg: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { status: string; msg: string }): void => cb(data)
+      ipcRenderer.on('speaking:progress', listener)
+      return () => ipcRenderer.removeListener('speaking:progress', listener)
+    }
   },
 
   // Post-session exams
@@ -81,7 +100,9 @@ const api = {
 
   // Grammar & Vocabulary
   grammar: {
-    list: () => ipcRenderer.invoke('grammar:list')
+    list: () => ipcRenderer.invoke('grammar:list'),
+    chat: (grammarId: string, messages: { role: string; content: string }[]) =>
+      ipcRenderer.invoke('grammar:chat', grammarId, messages)
   },
   vocabulary: {
     list: () => ipcRenderer.invoke('vocabulary:list')
@@ -113,6 +134,17 @@ const api = {
   // File dialog
   dialog: {
     openFile: () => ipcRenderer.invoke('dialog:open-file')
+  },
+
+  // Full data export / import
+  data: {
+    exportAll: () => ipcRenderer.invoke('data:export'),
+    importAll: () => ipcRenderer.invoke('data:import'),
+    onProgress: (cb: (data: { msg: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { msg: string }): void => cb(data)
+      ipcRenderer.on('data:progress', listener)
+      return () => ipcRenderer.removeListener('data:progress', listener)
+    }
   }
 }
 

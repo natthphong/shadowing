@@ -56,6 +56,31 @@ export default function Dashboard(): JSX.Element {
     </div>
   )
 
+  // 12-week activity heatmap: columns are weeks, rows are weekdays, ending today
+  const buildHeatmap = (): { day: string; count: number }[][] => {
+    const countByDay = new Map(stats.activityByDay.map((d) => [d.day, d.count]))
+    const dayMs = 86400000
+    const today = new Date()
+    const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate())
+    const totalDays = 12 * 7 + (new Date(todayUtc).getUTCDay() + 1)
+    const cells: { day: string; count: number }[] = []
+    for (let i = totalDays - 1; i >= 0; i -= 1) {
+      const day = new Date(todayUtc - i * dayMs).toISOString().slice(0, 10)
+      cells.push({ day, count: countByDay.get(day) || 0 })
+    }
+    const weeks: { day: string; count: number }[][] = []
+    for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
+    return weeks
+  }
+
+  const heatColor = (count: number): string => {
+    if (count === 0) return 'bg-surface-container'
+    if (count < 5) return 'bg-primary/25'
+    if (count < 15) return 'bg-primary/50'
+    if (count < 30) return 'bg-primary/75'
+    return 'bg-primary'
+  }
+
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-background">
       <header className="w-full h-16 flex items-center px-gutter bg-surface-container-lowest border-b border-outline-variant drag-region">
@@ -77,9 +102,54 @@ export default function Dashboard(): JSX.Element {
             <StatCard icon="style" label="Due Cards" value={stats.dueFlashcards} sub={`of ${stats.totalFlashcards}`} color="tertiary" />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <StatCard icon="translate" label="Vocabulary" value={stats.totalVocab} sub="words collected" color="secondary" />
             <StatCard icon="library_books" label="Grammar Topics" value={stats.totalGrammar} color="secondary" />
+            <StatCard
+              icon="interpreter_mode"
+              label="Speaking Answers"
+              value={stats.totalSpeakingAnswers}
+              sub={stats.totalSpeakingAnswers > 0 ? `avg ${stats.avgSpeakingScore}%` : 'Q&A practice'}
+              color="secondary"
+            />
+            <StatCard
+              icon="local_fire_department"
+              label="Day Streak"
+              value={stats.currentStreak}
+              sub={`best ${stats.bestStreak} days`}
+              color={stats.currentStreak > 0 ? '[#f59e0b]' : 'secondary'}
+            />
+          </div>
+
+          {/* Activity heatmap */}
+          <div className="p-5 bg-white rounded-2xl border border-outline-variant">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-on-surface">Learning Activity (12 weeks)</h3>
+              <span className="text-xs text-secondary flex items-center gap-1">
+                <span className="material-symbols-outlined text-[14px] text-[#f59e0b]" style={{ fontVariationSettings: "'FILL' 1" }}>local_fire_department</span>
+                {stats.currentStreak > 0 ? `${stats.currentStreak}-day streak — keep it going!` : 'Practice today to start a streak'}
+              </span>
+            </div>
+            <div className="flex gap-1 overflow-x-auto no-scrollbar">
+              {buildHeatmap().map((week, wi) => (
+                <div key={wi} className="flex flex-col gap-1">
+                  {week.map((cell) => (
+                    <div
+                      key={cell.day}
+                      title={`${cell.day}: ${cell.count} activities`}
+                      className={`w-3.5 h-3.5 rounded-[3px] ${heatColor(cell.count)}`}
+                    />
+                  ))}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-1.5 mt-3 text-[10px] text-secondary justify-end">
+              Less
+              {[0, 3, 10, 20, 40].map((n) => (
+                <div key={n} className={`w-3 h-3 rounded-[3px] ${heatColor(n)}`} />
+              ))}
+              More
+            </div>
           </div>
 
           {/* Score trend */}

@@ -46,7 +46,57 @@ export function registerDashboardHandlers(): void {
       `)
       .all()
 
+    const speaking = db
+      .prepare('SELECT COUNT(*) as c, AVG(score) as a FROM speaking_answers')
+      .get() as { c: number; a: number | null }
+    const speakingQuestions = (db.prepare('SELECT COUNT(*) as c FROM speaking_questions').get() as { c: number }).c
+
+    // One row per calendar day with any learning activity (practice, SRS review, speaking, exams)
+    const activityByDay = db
+      .prepare(`
+        SELECT day, SUM(c) as count FROM (
+          SELECT date(created_at) as day, COUNT(*) as c FROM practice_attempts GROUP BY day
+          UNION ALL SELECT date(reviewed_at) as day, COUNT(*) as c FROM review_history GROUP BY day
+          UNION ALL SELECT date(created_at) as day, COUNT(*) as c FROM speaking_answers GROUP BY day
+          UNION ALL SELECT date(completed_at) as day, COUNT(*) as c FROM quiz_attempts GROUP BY day
+        )
+        WHERE day IS NOT NULL
+        GROUP BY day ORDER BY day ASC
+      `)
+      .all() as { day: string; count: number }[]
+
+    const dayMs = 86400000
+    const days = activityByDay.map((r) => r.day)
+    const daySet = new Set(days)
+    const todayStr = new Date().toISOString().slice(0, 10)
+
+    let currentStreak = 0
+    // Streak still counts if today has no activity yet — anchor on today or yesterday
+    let cursor = daySet.has(todayStr)
+      ? Date.parse(todayStr)
+      : Date.parse(todayStr) - dayMs
+    while (daySet.has(new Date(cursor).toISOString().slice(0, 10))) {
+      currentStreak += 1
+      cursor -= dayMs
+    }
+
+    let bestStreak = 0
+    let runLength = 0
+    let prevTime = 0
+    for (const day of days) {
+      const t = Date.parse(day)
+      runLength = prevTime && t - prevTime === dayMs ? runLength + 1 : 1
+      bestStreak = Math.max(bestStreak, runLength)
+      prevTime = t
+    }
+
     return {
+      totalSpeakingAnswers: speaking.c,
+      totalSpeakingQuestions: speakingQuestions,
+      avgSpeakingScore: Math.round((speaking.a ?? 0) * 10) / 10,
+      activityByDay,
+      currentStreak,
+      bestStreak,
       totalSessions,
       totalSegments,
       totalAttempts,

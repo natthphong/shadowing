@@ -8,8 +8,9 @@ import Grammar from './pages/Grammar'
 import Settings from './pages/Settings'
 import Exam from './pages/Exam'
 import ExamHistory from './pages/ExamHistory'
+import SpeakingPractice from './pages/SpeakingPractice'
 
-const APP_VERSION = '0.0.12'
+const APP_VERSION = '0.0.14'
 
 export default function App(): JSX.Element {
   return (
@@ -24,6 +25,7 @@ export default function App(): JSX.Element {
             <Route path="/practice/:sessionId" element={<Practice />} />
             <Route path="/exam/:sessionId" element={<Exam />} />
             <Route path="/exam-history" element={<ExamHistory />} />
+            <Route path="/speaking" element={<SpeakingPractice />} />
             <Route path="/flashcards" element={<Flashcards />} />
             <Route path="/grammar" element={<Grammar />} />
             <Route path="/settings" element={<Settings />} />
